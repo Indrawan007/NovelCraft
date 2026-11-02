@@ -53,10 +53,10 @@ jobs:
           exec > "$RUNNER_TEMP/visual-step.log" 2>&1
           set -E
           on_error() {
-            diagnostic=$(tail -n 40 "$RUNNER_TEMP/visual-step.log" | tail -c 5000)
-            diagnostic=${diagnostic//'%'/'%25'}
-            diagnostic=${diagnostic//$'\n'/'%0A'}
-            printf '::error title=Visual failure::%s\n' "$diagnostic" >&3
+            while IFS= read -r line; do printf '::error title=Visual failure::%s\n' "$line" >&3; done < <(tail -n 30 "$RUNNER_TEMP/visual-step.log")
+            if [ -f "$RUNNER_TEMP/gui.log" ]; then
+              while IFS= read -r line; do printf '::error title=GUI log::%s\n' "$line" >&3; done < "$RUNNER_TEMP/gui.log"
+            fi
           }
           trap on_error ERR
           sudo apt-get install -y xvfb xdotool imagemagick mesa-vulkan-drivers

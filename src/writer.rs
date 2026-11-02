@@ -7,6 +7,7 @@ use tokio::io::AsyncWriteExt;
 #[derive(Default)]
 pub struct Writer {
     content: text_editor::Content,
+    word_count: usize,
     path: Option<PathBuf>,
     saved_contents: Option<String>,
     target_input: String,
@@ -77,8 +78,8 @@ impl Writer {
                 let edited = action.is_edit();
                 self.dirty |= edited;
                 self.content.perform(action);
-                if edited && self.show_preview {
-                    self.refresh_preview();
+                if edited {
+                    self.refresh_content_stats();
                 }
             }
             Message::TargetChanged(value) if !self.controls_blocked() => {
@@ -123,9 +124,7 @@ impl Writer {
                         self.saved_contents = Some(contents);
                         self.target_input.clear();
                         self.preview_notice = None;
-                        if self.show_preview {
-                            self.refresh_preview();
-                        }
+                        self.refresh_content_stats();
                         self.dirty = false;
                         self.error = None;
                     }
@@ -213,6 +212,15 @@ impl Writer {
         }
     }
 
+    fn refresh_content_stats(&mut self) {
+        // Iced joins lines with whitespace in Content::text(); counting each line
+        // is equivalent without allocating a second copy of the entire draft.
+        self.word_count = self.content.lines().map(|line| line.split_whitespace().count()).sum();
+        if self.show_preview {
+            self.refresh_preview();
+        }
+    }
+
     fn refresh_preview(&mut self) {
         self.preview_items = markdown::parse(&self.content.text()).collect();
     }
@@ -251,7 +259,7 @@ impl Writer {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "Draft baru".to_owned());
         let status = if self.dirty { " • belum disimpan" } else { "" };
-        let words = self.content.text().split_whitespace().count();
+        let words = self.word_count;
 
         let mut editor = text_editor(&self.content)
             .height(Length::Fill)
@@ -741,6 +749,59 @@ mod tests {
             assert_eq!(tokio::fs::read(&path).await.unwrap(), b"perubahan eksternal".to_vec());
         }
         tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[test]
+    fn cached_word_count_matches_editor_text_through_document_lifecycle() {
+        use text_editor::{Action, Edit, Motion};
+        use std::sync::Arc;
+        let mut writer = Writer::default();
+        assert_eq!(writer.word_count, 0);
+        for source in ["", "satu", "dua  kata\r\nbaris lain\r\n", "  α\u{2003}β\n\n 🌙 ", "a\rb\n\rc"] {
+            let _ = writer.update(Message::Opened(Ok(Some(("/draft.md".into(), source.into())))));
+            assert_eq!(writer.word_count, writer.content.text().split_whitespace().count());
+            assert_eq!(writer.contents_to_save(), source);
+            let _ = writer.update(Message::Edit(Action::Move(Motion::DocumentEnd)));
+            assert_eq!(writer.word_count, writer.content.text().split_whitespace().count());
+            assert!(!writer.dirty);
+            drop(writer.view(&Theme::TokyoNight));
+        }
+        let _ = writer.update(Message::TogglePreview);
+        for action in [
+            Action::Edit(Edit::Paste(Arc::new(" 🌙 kata baru\nbaris kedua".into()))),
+            Action::Edit(Edit::Enter),
+            Action::Edit(Edit::Backspace),
+            Action::SelectAll,
+            Action::Edit(Edit::Paste(Arc::new("ganti semua  α\u{2003}β".into()))),
+        ] {
+            let _ = writer.update(Message::Edit(action));
+            assert_eq!(writer.word_count, writer.content.text().split_whitespace().count());
+            assert!(writer.show_preview);
+        }
+        assert!(writer.dirty);
+        let count = writer.word_count;
+        let output = writer.contents_to_save();
+        let _ = writer.update(Message::Save);
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Insert('x'))));
+        assert_eq!(writer.word_count, count);
+        assert_eq!(writer.contents_to_save(), output);
+        let _ = writer.update(Message::CancelFormatSave);
+        let _ = writer.update(Message::NewDraft);
+        let _ = writer.update(Message::ConfirmDiscard);
+        assert_eq!(writer.word_count, 0);
+        assert!(writer.content.text().split_whitespace().next().is_none());
+    }
+
+    #[test]
+    fn cached_word_count_handles_large_draft_and_reopening() {
+        let mut writer = Writer::default();
+        let contents = "kata α β\n".repeat(5000);
+        let _ = writer.update(Message::Opened(Ok(Some(("/large.txt".into(), contents)))));
+        assert_eq!(writer.word_count, 15_000);
+        for _ in 0..5 { drop(writer.view(&Theme::TokyoNight)); }
+        assert_eq!(writer.word_count, 15_000);
+        let _ = writer.update(Message::Opened(Ok(Some(("/empty.txt".into(), String::new())))));
+        assert_eq!(writer.word_count, 0);
     }
 
     #[test]

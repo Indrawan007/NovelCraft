@@ -54,7 +54,10 @@ berakhir saat berpindah halaman. Shortcut navigasi tetap tersedia. Writer juga
 menyediakan target jumlah kata per draft dan progress bar; target hanya berlaku
 selama sesi dan direset ketika draft baru dibuat atau sebuah file berhasil dibuka.
 Target menghitung seluruh isi draft berdasarkan pemisah whitespace, termasuk
-teks yang sudah ada dan markup Markdown. Ini bukan target harian; mengubah target
+teks yang sudah ada dan markup Markdown. Hitungan diperbarui saat draft dibuka
+atau diedit, bukan setiap tampilan dibangun ulang. Perhitungan masih menelusuri
+seluruh draft saat diedit; preview Markdown juga diparse ulang setelah edit, sehingga
+draft besar tetap dapat terasa lambat. Ini bukan target harian; mengubah target
 tidak mengubah atau menyimpan isi file. Kosongkan kolom untuk menyembunyikan target.
 Tombol **Fullscreen (F11)** terpisah dari mode fokus dan tersedia di semua halaman;
 tekan lagi untuk kembali ke mode berjendela. Fullscreen dapat digabungkan dengan
@@ -85,7 +88,9 @@ melompat langsung ke nomor bagian; lompatan dimulai dari atas bagian tersebut.
 Pencarian teks EPUB menemukan bagian sebelumnya/berikutnya dengan mengubah teks
 ke huruf kecil Unicode (bukan case folding penuh), memutar kembali saat mencapai
 ujung, dan kembali ke awal bagian yang cocok. Pencarian tidak menyorot atau melompat ke posisi kata, hanya mencari teks
-hasil ekstraksi, dan dapat terasa lambat pada buku besar. Reader menampilkan daftar
+hasil ekstraksi, dan dapat terasa lambat pada buku besar. Untuk pencarian berulang
+dengan kata yang sama pada dokumen yang sama, hasil tiap bagian yang sudah diperiksa
+disimpan sementara; pencarian pertama tetap memproses bagian yang dilewati. Reader menampilkan daftar
 isi EPUB 3 `nav` atau NCX jika tujuannya cocok dengan bagian spine; `nav` yang
 valid didahulukan. Jika `nav` tidak tersedia atau tidak dapat digunakan, NCX
 menjadi cadangan. Pilihan daftar isi membuka awal bagian, bukan posisi jangkar

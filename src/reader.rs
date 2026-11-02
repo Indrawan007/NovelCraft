@@ -17,6 +17,7 @@ pub struct Reader {
     section_input_error: bool,
     search_input: String,
     search_notice: Option<String>,
+    epub_search: Option<EpubSearch>,
     show_text_search: bool,
     text_search_line: Option<usize>,
     text_search_excerpt: Option<String>,
@@ -50,6 +51,7 @@ impl Default for Reader {
             section_input_error: false,
             search_input: String::new(),
             search_notice: None,
+            epub_search: None,
             show_text_search: false,
             text_search_line: None,
             text_search_excerpt: None,
@@ -227,6 +229,7 @@ impl Reader {
         self.section_input_error = false;
         self.search_input.clear();
         self.search_notice = None;
+        self.epub_search = None;
         self.show_text_search = false;
         self.text_search_line = None;
         self.text_search_excerpt = None;
@@ -322,6 +325,7 @@ impl Reader {
             Message::SearchInputChanged(value) if (self.is_epub || self.path.is_some() && self.show_text_search) && !self.controls_blocked() => {
                 self.search_input = value;
                 self.search_notice = None;
+                self.epub_search = None;
                 self.text_search_line = None;
                 self.text_search_excerpt = None;
             }
@@ -344,15 +348,16 @@ impl Reader {
                         self.text_search_excerpt = None;
                         self.search_notice = Some("Teks tidak ditemukan di sumber file.".into());
                     }
-                } else if let Some(section) = find_matching_section(
-                    &self.sections, self.section, query, matches!(message, Message::SearchNext),
-                ) {
-                    self.pending_scroll = None;
-                    self.section = section;
-                    self.search_notice = Some(format!("Ditemukan di bagian {} (mulai dari atas).", section + 1));
-                    self.invalidate_scroll_position();
-                    return reset_scroll();
                 } else {
+                    let section_count = self.sections.len();
+                    let cache = self.epub_search.get_or_insert_with(|| EpubSearch::new(query, section_count));
+                    if let Some(section) = find_matching_section(&self.sections, self.section, cache, matches!(message, Message::SearchNext)) {
+                        self.pending_scroll = None;
+                        self.section = section;
+                        self.search_notice = Some(format!("Ditemukan di bagian {} (mulai dari atas).", section + 1));
+                        self.invalidate_scroll_position();
+                        return reset_scroll();
+                    }
                     self.search_notice = Some("Teks tidak ditemukan di bagian EPUB.".into());
                 }
             }
@@ -647,12 +652,23 @@ fn is_markdown_path(path: &Path) -> bool {
     })
 }
 
-// Searches the extracted text of whole spine sections, starting after the current one.
-fn find_matching_section(sections: &[String], current: usize, query: &str, forward: bool) -> Option<usize> {
-    if sections.is_empty() || current >= sections.len() || query.trim().is_empty() {
+// Results are cached lazily per section for the current query. This preserves
+// the old short-circuit behavior without rescanning visited sections on wrap.
+struct EpubSearch {
+    query: String,
+    matches: Vec<Option<bool>>,
+}
+
+impl EpubSearch {
+    fn new(query: &str, sections: usize) -> Self {
+        Self { query: query.trim().to_lowercase(), matches: vec![None; sections] }
+    }
+}
+
+fn find_matching_section(sections: &[String], current: usize, cache: &mut EpubSearch, forward: bool) -> Option<usize> {
+    if sections.is_empty() || current >= sections.len() || cache.query.is_empty() || cache.matches.len() != sections.len() {
         return None;
     }
-    let query = query.trim().to_lowercase();
     let mut index = current;
     for _ in 0..sections.len() {
         index = if forward {
@@ -662,7 +678,9 @@ fn find_matching_section(sections: &[String], current: usize, query: &str, forwa
         } else {
             index - 1
         };
-        if sections[index].to_lowercase().contains(&query) {
+        let query = &cache.query;
+        let matches = cache.matches[index].get_or_insert_with(|| sections[index].to_lowercase().contains(query));
+        if *matches {
             return Some(index);
         }
     }
@@ -1186,18 +1204,82 @@ mod tests {
         assert!(!reader.busy);
     }
 
+    fn find_section(sections: &[String], current: usize, query: &str, forward: bool) -> Option<usize> {
+        find_matching_section(sections, current, &mut EpubSearch::new(query, sections.len()), forward)
+    }
+
     #[test]
     fn section_search_wraps_and_ignores_case() {
         let sections = vec!["Bulan dan laut".into(), "Hujan turun".into(), "Malam BULAN".into()];
-        assert_eq!(find_matching_section(&sections, 0, "bulAN", true), Some(2));
-        assert_eq!(find_matching_section(&sections, 2, " bulan ", true), Some(0));
-        assert_eq!(find_matching_section(&sections, 0, "BULAN", false), Some(2));
-        assert_eq!(find_matching_section(&sections, 1, "hujan", true), Some(1));
-        assert_eq!(find_matching_section(&sections, 0, "tak ada", true), None);
-        assert_eq!(find_matching_section(&sections, 0, "  ", true), None);
-        assert_eq!(find_matching_section(&[], 0, "bulan", true), None);
-        assert_eq!(find_matching_section(&sections, 3, "bulan", true), None);
-        assert_eq!(find_matching_section(&["Éclair".into()], 0, "éCLAIR", true), Some(0));
+        assert_eq!(find_section(&sections, 0, "bulAN", true), Some(2));
+        assert_eq!(find_section(&sections, 2, " bulan ", true), Some(0));
+        assert_eq!(find_section(&sections, 0, "BULAN", false), Some(2));
+        assert_eq!(find_section(&sections, 1, "hujan", true), Some(1));
+        assert_eq!(find_section(&sections, 0, "tak ada", true), None);
+        assert_eq!(find_section(&sections, 0, "  ", true), None);
+        assert_eq!(find_section(&[], 0, "bulan", true), None);
+        assert_eq!(find_section(&sections, 3, "bulan", true), None);
+        assert_eq!(find_section(&["Éclair".into()], 0, "éCLAIR", true), Some(0));
+    }
+
+    #[test]
+    fn section_search_cache_is_lazy_reused_and_matches_reference_behavior() {
+        let sections = vec!["Bulan laut".into(), "Hujan".into(), "BULAN malam".into(), "Éclair".into()];
+        let mut cache = EpubSearch::new(" BULAN ", sections.len());
+        assert_eq!(find_matching_section(&sections, 0, &mut cache, true), Some(2));
+        assert_eq!(cache.matches, vec![None, Some(false), Some(true), None]);
+        assert_eq!(find_matching_section(&sections, 2, &mut cache, true), Some(0));
+        assert_eq!(cache.matches, vec![Some(true), Some(false), Some(true), Some(false)]);
+        let cached = cache.matches.clone();
+        assert_eq!(find_matching_section(&sections, 0, &mut cache, false), Some(2));
+        assert_eq!(cache.matches, cached);
+
+        fn reference(sections: &[String], current: usize, query: &str, forward: bool) -> Option<usize> {
+            if sections.is_empty() || current >= sections.len() || query.trim().is_empty() { return None; }
+            let query = query.trim().to_lowercase();
+            let mut index = current;
+            for _ in 0..sections.len() {
+                index = if forward { (index + 1) % sections.len() } else { (index + sections.len() - 1) % sections.len() };
+                if sections[index].to_lowercase().contains(&query) { return Some(index); }
+            }
+            None
+        }
+        for query in ["bulan", " Hujan ", "ÉCLAIR", "tidak ada", "  "] {
+            let mut cache = EpubSearch::new(query, sections.len());
+            for _ in 0..2 {
+                for current in 0..=sections.len() {
+                    for forward in [false, true] {
+                        assert_eq!(find_matching_section(&sections, current, &mut cache, forward), reference(&sections, current, query, forward));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn section_search_cache_resets_for_query_and_new_document() {
+        let mut reader = Reader::default();
+        let doc = Document { sections: vec!["Bulan".into(), "BULAN".into()], is_epub: true, toc: Vec::new() };
+        let _ = reader.update(Message::Opened(Ok(Some(("book.epub".into(), doc)))));
+        let _ = reader.update(Message::SearchInputChanged("bulan".into()));
+        let _ = reader.update(Message::SearchNext);
+        assert_eq!(reader.section, 1);
+        assert_eq!(reader.epub_search.as_ref().unwrap().matches, vec![None, Some(true)]);
+        let _ = reader.update(Message::PreviousSection);
+        let _ = reader.update(Message::SearchNext);
+        assert_eq!(reader.epub_search.as_ref().unwrap().matches, vec![None, Some(true)]);
+        let _ = reader.update(Message::SearchInputChanged("lain".into()));
+        assert!(reader.epub_search.is_none());
+        let _ = reader.update(Message::SearchNext);
+        assert_eq!(reader.epub_search.as_ref().unwrap().matches, vec![Some(false), Some(false)]);
+        let doc = Document { sections: vec!["Lain".into(), "LAIN".into()], is_epub: true, toc: Vec::new() };
+        let _ = reader.update(Message::Opened(Ok(Some(("other.epub".into(), doc)))));
+        assert!(reader.epub_search.is_none());
+        assert!(reader.search_input.is_empty());
+        let _ = reader.update(Message::SearchInputChanged("lain".into()));
+        let _ = reader.update(Message::SearchNext);
+        assert_eq!(reader.section, 1);
+        assert_eq!(reader.epub_search.as_ref().unwrap().matches, vec![None, Some(true)]);
     }
 
     #[test]

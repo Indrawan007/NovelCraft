@@ -17,6 +17,7 @@ pub struct Writer {
     busy: bool,
     pending_discard: Option<PendingAction>,
     pending_format_save: Option<bool>,
+    pending_overwrite: Option<PreparedSave>,
     error: Option<String>,
 }
 
@@ -24,6 +25,15 @@ pub struct Writer {
 enum PendingAction {
     NewDraft,
     Open,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedSave {
+    path: PathBuf,
+    contents: String,
+    expected: FileState,
+    expected_target: Option<PathBuf>,
+    requires_overwrite: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +52,9 @@ pub enum Message {
     SaveAs,
     ConfirmFormatSave,
     CancelFormatSave,
+    SavePrepared(Result<Option<PreparedSave>, String>),
+    ConfirmOverwrite,
+    CancelOverwrite,
     Saved(Result<Option<(PathBuf, String)>, String>),
 }
 
@@ -55,7 +68,7 @@ impl Writer {
     }
 
     fn controls_blocked(&self) -> bool {
-        self.busy || self.pending_discard.is_some() || self.pending_format_save.is_some()
+        self.busy || self.pending_discard.is_some() || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -135,6 +148,21 @@ impl Writer {
                 }
             }
             Message::CancelFormatSave if !self.busy => self.pending_format_save = None,
+            Message::SavePrepared(result) => {
+                self.busy = false;
+                match result {
+                    Ok(Some(prepared)) if prepared.requires_overwrite => self.pending_overwrite = Some(prepared),
+                    Ok(Some(prepared)) => return self.start_prepared_save(prepared),
+                    Ok(None) => {}
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            Message::ConfirmOverwrite if !self.busy => {
+                if let Some(prepared) = self.pending_overwrite.take() {
+                    return self.start_prepared_save(prepared);
+                }
+            }
+            Message::CancelOverwrite if !self.busy => self.pending_overwrite = None,
             Message::Saved(result) => {
                 self.busy = false;
                 match result {
@@ -156,9 +184,14 @@ impl Writer {
     fn start_save(&mut self, save_as: bool) -> Task<Message> {
         self.busy = true;
         Task::perform(
-            save_file(self.path.clone(), self.saved_contents.clone(), self.contents_to_save(), save_as),
-            Message::Saved,
+            prepare_save(self.path.clone(), self.saved_contents.clone(), self.contents_to_save(), save_as),
+            Message::SavePrepared,
         )
+    }
+
+    fn start_prepared_save(&mut self, prepared: PreparedSave) -> Task<Message> {
+        self.busy = true;
+        Task::perform(write_prepared(prepared), Message::Saved)
     }
 
     fn contents_to_save(&self) -> String {
@@ -276,6 +309,14 @@ impl Writer {
                 .spacing(12),
             );
         }
+        if let Some(prepared) = &self.pending_overwrite {
+            view = view.push(text("File tujuan sudah ada. Ganti isi file ini dengan draft?"));
+            view = view.push(text(prepared.path.display().to_string()).size(14));
+            view = view.push(row![
+                button("Ganti file").on_press(Message::ConfirmOverwrite),
+                button("Batal").on_press(Message::CancelOverwrite),
+            ].spacing(12));
+        }
         if let Some(error) = &self.error {
             view = view.push(text(error));
         }
@@ -387,12 +428,12 @@ async fn open_file() -> Result<Option<(PathBuf, String)>, String> {
     Ok(Some((path, contents)))
 }
 
-async fn save_file(
+async fn prepare_save(
     current_path: Option<PathBuf>,
     saved_contents: Option<String>,
     contents: String,
     save_as: bool,
-) -> Result<Option<(PathBuf, String)>, String> {
+) -> Result<Option<PreparedSave>, String> {
     let path = if !save_as && current_path.is_some() {
         current_path.clone().unwrap()
     } else {
@@ -408,6 +449,15 @@ async fn save_file(
         file.path().to_owned()
     };
 
+    prepare_destination(current_path, saved_contents, contents, path).await.map(Some)
+}
+
+async fn prepare_destination(
+    current_path: Option<PathBuf>,
+    saved_contents: Option<String>,
+    contents: String,
+    path: PathBuf,
+) -> Result<PreparedSave, String> {
     let same_file = match &current_path {
         Some(current) => is_same_file(current, &path).await,
         None => false,
@@ -418,10 +468,27 @@ async fn save_file(
     } else {
         read_file_state(&path).await.map_err(|error| format!("Gagal memeriksa file tujuan: {error}"))?
     };
-    atomic_write_checked(&path, contents.as_bytes(), Some(&expected))
+    let requires_overwrite = !same_file && matches!(&expected, FileState::Present(_));
+    let expected_target = if requires_overwrite {
+        Some(tokio::fs::canonicalize(&path).await.map_err(|error| format!("Gagal memeriksa tujuan file: {error}"))?)
+    } else {
+        None
+    };
+    Ok(PreparedSave { path, contents, expected, expected_target, requires_overwrite })
+}
+
+async fn write_prepared(prepared: PreparedSave) -> Result<Option<(PathBuf, String)>, String> {
+    if let Some(expected_target) = &prepared.expected_target {
+        let actual_target = tokio::fs::canonicalize(&prepared.path).await
+            .map_err(|error| format!("Gagal memeriksa tujuan file: {error}"))?;
+        if &actual_target != expected_target {
+            return Err("Tujuan file berubah setelah konfirmasi; penyimpanan dibatalkan.".into());
+        }
+    }
+    atomic_write_checked(&prepared.path, prepared.contents.as_bytes(), Some(&prepared.expected))
         .await
         .map_err(|error| format!("Gagal menyimpan file: {error}"))?;
-    Ok(Some((path, contents)))
+    Ok(Some((prepared.path, prepared.contents)))
 }
 
 async fn is_same_file(current: &Path, destination: &Path) -> bool {
@@ -434,7 +501,7 @@ async fn is_same_file(current: &Path, destination: &Path) -> bool {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum FileState {
     Missing,
     Present(Vec<u8>),
@@ -647,10 +714,10 @@ mod tests {
             let mut writer = Writer::default();
             let _ = writer.update(Message::Opened(Ok(Some((path.clone(), original.into())))));
             let contents = writer.contents_to_save();
-            save_file(writer.path.clone(), writer.saved_contents.clone(), contents, false).await.unwrap();
+            save_known_file(writer.path.clone(), writer.saved_contents.clone(), contents).await.unwrap();
             assert_eq!(tokio::fs::read(&path).await.unwrap(), original.as_bytes().to_vec());
             tokio::fs::write(&path, "perubahan eksternal").await.unwrap();
-            let result = save_file(writer.path.clone(), writer.saved_contents.clone(), writer.contents_to_save(), false).await;
+            let result = save_known_file(writer.path.clone(), writer.saved_contents.clone(), writer.contents_to_save()).await;
             assert!(result.is_err());
             assert_eq!(tokio::fs::read(&path).await.unwrap(), b"perubahan eksternal".to_vec());
         }
@@ -942,6 +1009,13 @@ mod tests {
         tokio::fs::remove_file(path).await.unwrap();
     }
 
+    async fn save_known_file(current: Option<PathBuf>, saved: Option<String>, contents: String) -> Result<Option<(PathBuf, String)>, String> {
+        let path = current.clone().unwrap();
+        let prepared = prepare_destination(current, saved, contents, path).await?;
+        assert!(!prepared.requires_overwrite);
+        write_prepared(prepared).await
+    }
+
     fn temporary_directory() -> PathBuf {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -971,17 +1045,133 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn save_as_existing_target_requires_confirmation_and_cancel_preserves_files() {
+        let dir = temporary_directory();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let original = dir.join("original.md");
+        let target = dir.join("other.md");
+        tokio::fs::write(&original, "lama").await.unwrap();
+        tokio::fs::write(&target, "target awal").await.unwrap();
+        let prepared = prepare_destination(Some(original.clone()), Some("lama".into()), "draft baru".into(), target.clone()).await.unwrap();
+        assert!(prepared.requires_overwrite);
+        let mut writer = Writer { path: Some(original.clone()), saved_contents: Some("lama".into()),
+            content: text_editor::Content::with_text("draft baru"), dirty: true, busy: true, ..Writer::default() };
+        let _ = writer.update(Message::SavePrepared(Ok(Some(prepared.clone()))));
+        assert!(writer.pending_overwrite.is_some());
+        assert!(!writer.busy);
+        drop(writer.view(&Theme::TokyoNight));
+        let _ = writer.update(Message::NewDraft);
+        let _ = writer.update(Message::Save);
+        let _ = writer.update(Message::Edit(text_editor::Action::Edit(text_editor::Edit::Insert('x'))));
+        assert!(writer.pending_overwrite.is_some());
+        assert!(writer.dirty);
+        assert_eq!(tokio::fs::read_to_string(&target).await.unwrap(), "target awal");
+        let _ = writer.update(Message::CancelOverwrite);
+        assert!(writer.pending_overwrite.is_none());
+        assert_eq!(writer.path.as_ref(), Some(&original));
+        assert_eq!(writer.saved_contents.as_deref(), Some("lama"));
+        assert!(writer.dirty);
+        assert_eq!(writer.contents_to_save(), "draft baru\n");
+        assert_eq!(tokio::fs::read_to_string(&target).await.unwrap(), "target awal");
+        assert_eq!(tokio::fs::read_to_string(&original).await.unwrap(), "lama");
+        // Confirm starts the asynchronous write; only a successful result changes Writer state.
+        let _ = writer.update(Message::SavePrepared(Ok(Some(prepared.clone()))));
+        let _ = writer.update(Message::ConfirmOverwrite);
+        assert!(writer.busy);
+        assert!(writer.pending_overwrite.is_none());
+        assert!(writer.dirty);
+        let result = write_prepared(prepared).await;
+        let _ = writer.update(Message::Saved(result));
+        assert!(!writer.busy);
+        assert!(!writer.dirty);
+        assert_eq!(writer.path.as_ref(), Some(&target));
+        assert_eq!(tokio::fs::read_to_string(&target).await.unwrap(), "draft baru");
+        assert_eq!(tokio::fs::read_to_string(&original).await.unwrap(), "lama");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn save_as_rejects_target_changes_after_confirmation_prompt() {
+        let dir = temporary_directory();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let target = dir.join("other.md");
+        tokio::fs::write(&target, "sebelum").await.unwrap();
+        let prepared = prepare_destination(None, None, "draft".into(), target.clone()).await.unwrap();
+        assert!(prepared.requires_overwrite);
+        tokio::fs::write(&target, "perubahan luar").await.unwrap();
+        let mut writer = Writer { content: text_editor::Content::with_text("draft"), dirty: true,
+            busy: true, ..Writer::default() };
+        let _ = writer.update(Message::Saved(write_prepared(prepared).await));
+        assert!(writer.error.is_some());
+        assert!(writer.dirty);
+        assert_eq!(writer.contents_to_save(), "draft\n");
+        assert!(writer.path.is_none());
+        assert_eq!(tokio::fs::read_to_string(&target).await.unwrap(), "perubahan luar");
+        let prepared = prepare_destination(None, None, "draft".into(), target.clone()).await.unwrap();
+        tokio::fs::remove_file(&target).await.unwrap();
+        assert!(write_prepared(prepared).await.is_err());
+        assert!(!target.exists());
+        let absent = dir.join("new.md");
+        let prepared = prepare_destination(None, None, "draft".into(), absent.clone()).await.unwrap();
+        assert!(!prepared.requires_overwrite);
+        tokio::fs::write(&absent, "muncul belakangan").await.unwrap();
+        assert!(write_prepared(prepared).await.is_err());
+        assert_eq!(tokio::fs::read_to_string(&absent).await.unwrap(), "muncul belakangan");
+        let new_target = dir.join("fresh.md");
+        let prepared = prepare_destination(None, None, "draft".into(), new_target.clone()).await.unwrap();
+        assert!(!prepared.requires_overwrite);
+        write_prepared(prepared).await.unwrap();
+        assert_eq!(tokio::fs::read_to_string(&new_target).await.unwrap(), "draft");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn save_as_rejects_retargeted_symlink_even_when_contents_match() {
+        use std::os::unix::fs::symlink;
+        let dir = temporary_directory();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let one = dir.join("one.md");
+        let two = dir.join("two.md");
+        let link = dir.join("target.md");
+        tokio::fs::write(&one, "sama").await.unwrap();
+        tokio::fs::write(&two, "sama").await.unwrap();
+        symlink(&one, &link).unwrap();
+        let prepared = prepare_destination(None, None, "draft".into(), link.clone()).await.unwrap();
+        assert!(prepared.requires_overwrite);
+        tokio::fs::remove_file(&link).await.unwrap();
+        symlink(&two, &link).unwrap();
+        assert!(write_prepared(prepared).await.is_err());
+        assert_eq!(tokio::fs::read_to_string(&one).await.unwrap(), "sama");
+        assert_eq!(tokio::fs::read_to_string(&two).await.unwrap(), "sama");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn save_to_current_file_does_not_add_overwrite_confirmation() {
+        let dir = temporary_directory();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("draft.md");
+        tokio::fs::write(&path, "lama").await.unwrap();
+        let prepared = prepare_destination(Some(path.clone()), Some("lama".into()), "baru".into(), path.clone()).await.unwrap();
+        assert!(!prepared.requires_overwrite);
+        write_prepared(prepared).await.unwrap();
+        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "baru");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn refuses_external_changes_and_deletion_without_losing_draft() {
         let dir = temporary_directory();
         tokio::fs::create_dir_all(&dir).await.unwrap();
         let path = dir.join("draft.md");
         tokio::fs::write(&path, "versi awal").await.unwrap();
         tokio::fs::write(&path, "perubahan eksternal").await.unwrap();
-        let result = save_file(Some(path.clone()), Some("versi awal".into()), "draft baru".into(), false).await;
+        let result = save_known_file(Some(path.clone()), Some("versi awal".into()), "draft baru".into()).await;
         assert!(result.unwrap_err().contains("berubah atau terhapus"));
         assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "perubahan eksternal");
         tokio::fs::remove_file(&path).await.unwrap();
-        let result = save_file(Some(path.clone()), Some("versi awal".into()), "draft baru".into(), false).await;
+        let result = save_known_file(Some(path.clone()), Some("versi awal".into()), "draft baru".into()).await;
         assert!(result.is_err());
         assert!(!path.exists());
         tokio::fs::remove_dir_all(dir).await.unwrap();
@@ -993,9 +1183,9 @@ mod tests {
         tokio::fs::create_dir_all(&dir).await.unwrap();
         let path = dir.join("draft.md");
         tokio::fs::write(&path, "lama").await.unwrap();
-        let saved = save_file(Some(path.clone()), Some("lama".into()), "baru".into(), false).await.unwrap().unwrap();
+        let saved = save_known_file(Some(path.clone()), Some("lama".into()), "baru".into()).await.unwrap().unwrap();
         assert_eq!(saved, (path.clone(), "baru".into()));
-        let next = save_file(Some(path.clone()), Some(saved.1), "berikutnya".into(), false).await.unwrap();
+        let next = save_known_file(Some(path.clone()), Some(saved.1), "berikutnya".into()).await.unwrap();
         assert!(next.is_some());
         assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "berikutnya");
         tokio::fs::remove_dir_all(dir).await.unwrap();
@@ -1026,6 +1216,10 @@ mod tests {
         symlink(&target, &alias).unwrap();
         assert!(is_same_file(&target, &alias).await);
         assert!(!is_same_file(&target, &dir.join("other.md")).await);
+        let prepared = prepare_destination(Some(target.clone()), Some("lama".into()), "baru".into(), alias).await.unwrap();
+        assert!(!prepared.requires_overwrite);
+        write_prepared(prepared).await.unwrap();
+        assert_eq!(tokio::fs::read_to_string(&target).await.unwrap(), "baru");
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 

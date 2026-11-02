@@ -110,8 +110,12 @@ extended attributes belum dipertahankan.
 
 Writer memeriksa perubahan isi file di luar aplikasi sebelum menyimpan. Jika file
 berubah atau terhapus, gunakan **Simpan sebagai** untuk menyimpan draft di lokasi
-lain. Pemeriksaan ini tidak mengunci file: perubahan tepat antara pemeriksaan
-terakhir dan penggantian masih dapat terlewat. Tetap buat backup.
+lain. **Simpan sebagai** meminta konfirmasi tambahan sebelum mengganti file lain
+yang sudah ada (dialog sistem juga mungkin meminta konfirmasi). Setelah disetujui,
+Writer memeriksa kembali isi dan tujuan path; jika berubah, simpan dibatalkan dan
+draft tetap ada. Pemeriksaan ini tidak mengunci file dan tidak mendeteksi semua
+penggantian file dengan isi identik: perubahan antara pemeriksaan terakhir dan
+penggantian masih dapat terlewat. Tetap buat backup.
 Menyimpan file yang belum diedit mempertahankan isi UTF-8 aslinya, termasuk
 format newline. Setelah diedit, ekspor editor Iced menormalkan pemisah baris
 menjadi LF, dapat menambahkan newline di akhir, dan dapat mengurangi baris kosong

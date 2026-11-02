@@ -477,6 +477,41 @@ impl Reader {
     }
 
     pub fn view<'a>(&'a self, theme: &Theme, font_settings_ready: bool, font_status: &'static str) -> Element<'a, Message> {
+        let mut view = iced::widget::Column::new().spacing(10).height(Length::Fill);
+        if self.pending_remove_bookmark {
+            view = view.push(text("Hapus penanda tersimpan untuk file ini? File buku tidak akan dihapus."));
+            view = view.push(row![button("Hapus penanda").on_press(Message::ConfirmRemoveBookmark), button("Batal").on_press(Message::CancelRemoveBookmark)].spacing(12));
+        }
+        if self.busy { view = view.push(text("Memproses file atau penanda...")); }
+        if let Some(error) = &self.error { view = view.push(text(error)); }
+        if let Some(notice) = &self.bookmark_notice { view = view.push(text(notice).size(14)); }
+        if let Some(notice) = &self.link_notice { view = view.push(text(notice).size(14)); }
+        if !font_settings_ready { view = view.push(text(font_status).size(12)); }
+
+        let contents = self.sections.get(self.section).map(String::as_str).unwrap_or("");
+        let content: Element<'_, Message> = if self.is_markdown && !self.show_source {
+            markdown::view(
+                &self.markdown_items,
+                markdown::Settings::with_text_size(self.font_size),
+                markdown::Style::from_palette(theme.palette()),
+            )
+            .map(Message::LinkClicked)
+        } else {
+            text(contents).size(self.font_size).into()
+        };
+        let revision = self.scroll_revision;
+        let document = container(content).width(Length::Fill).max_width(900);
+        let reader = scrollable(container(document).width(Length::Fill).center_x(Length::Fill))
+            .id(scrollable::Id::new(SCROLL_ID))
+            .on_scroll(move |viewport| Message::Scrolled {
+                revision,
+                percent: scroll_percentage(viewport.absolute_offset().y, viewport.bounds().height, viewport.content_bounds().height),
+            })
+            .height(Length::Fill).width(Length::Fill);
+        view = view.push(container(reader).width(Length::Fill).height(Length::Fill));
+        view.into()
+    }
+    pub(crate) fn tools_view<'a>(&'a self, font_settings_ready: bool, font_status: &'static str) -> Element<'a, Message> {
         let mut open = button("Buka file").style(crate::mockup_style::navigation_menu);
         let mut save_bookmark = button("Simpan posisi").style(crate::mockup_style::navigation_menu);
         let mut restore_bookmark = button("Pulihkan posisi").style(crate::mockup_style::navigation_menu);
@@ -489,14 +524,14 @@ impl Reader {
                 remove_bookmark = remove_bookmark.on_press(Message::AskRemoveBookmark);
             }
         }
-        let mut smaller = button("A−").style(crate::mockup_style::secondary);
+        let mut smaller = button("A-").style(crate::mockup_style::secondary);
         let mut larger = button("A+").style(crate::mockup_style::secondary);
         if font_settings_ready && !self.controls_blocked() && self.font_size > MIN_FONT_SIZE { smaller = smaller.on_press(Message::FontSmaller); }
         if font_settings_ready && !self.controls_blocked() && self.font_size < MAX_FONT_SIZE { larger = larger.on_press(Message::FontLarger); }
 
         let section_button = |label: &'static str, section: ToolSection| {
-            let arrow = if self.tool_section == Some(section) { "▾" } else { "▸" };
-            let button = button(text(format!("{arrow}  {label}")).size(13)).width(Length::Fill).style(crate::mockup_style::navigation_menu);
+            let marker = if self.tool_section == Some(section) { "-" } else { "+" };
+            let button = button(text(format!("{marker}   {label}")).size(13)).width(Length::Fill).style(crate::mockup_style::navigation_menu);
             if !self.controls_blocked() { button.on_press(Message::ToggleToolSection(section)) } else { button }
         };
         let mut tools = column![section_button("File & penanda", ToolSection::File)].spacing(6).width(Length::Fill);
@@ -517,8 +552,8 @@ impl Reader {
         if self.is_epub {
             tools = tools.push(section_button("Daftar isi & bagian", ToolSection::Navigation));
             if self.tool_section == Some(ToolSection::Navigation) {
-                let mut previous = button("← Sebelumnya").style(crate::mockup_style::secondary);
-                let mut next = button("Berikutnya →").style(crate::mockup_style::secondary);
+                let mut previous = button("Sebelumnya").style(crate::mockup_style::secondary);
+                let mut next = button("Berikutnya").style(crate::mockup_style::secondary);
                 if !self.controls_blocked() && self.section > 0 { previous = previous.on_press(Message::PreviousSection); }
                 if !self.controls_blocked() && self.section + 1 < self.sections.len() { next = next.on_press(Message::NextSection); }
                 tools = tools.push(text(format!("Bagian {} / {}", self.section + 1, self.sections.len())).size(12));
@@ -557,8 +592,8 @@ impl Reader {
                 if self.is_epub || self.show_text_search {
                     let placeholder = if self.is_epub { "Cari di EPUB" } else { "Cari di sumber" };
                     let mut search = text_input(placeholder, &self.search_input).width(Length::Fill);
-                    let mut previous = button("← Cari").style(crate::mockup_style::secondary);
-                    let mut next = button("Cari →").style(crate::mockup_style::secondary);
+                    let mut previous = button("Sebelumnya").style(crate::mockup_style::secondary);
+                    let mut next = button("Berikutnya").style(crate::mockup_style::secondary);
                     if !self.controls_blocked() {
                         search = search.on_input(Message::SearchInputChanged).on_submit(Message::SearchNext);
                         previous = previous.on_press(Message::SearchPrevious); next = next.on_press(Message::SearchNext);
@@ -572,45 +607,9 @@ impl Reader {
                 }
             }
         }
-        let mut view = iced::widget::Column::new().spacing(10).height(Length::Fill);
-        if self.pending_remove_bookmark {
-            view = view.push(text("Hapus penanda tersimpan untuk file ini? File buku tidak akan dihapus."));
-            view = view.push(row![button("Hapus penanda").on_press(Message::ConfirmRemoveBookmark), button("Batal").on_press(Message::CancelRemoveBookmark)].spacing(12));
-        }
-        if self.busy { view = view.push(text("Memproses file atau penanda...")); }
-        if let Some(error) = &self.error { view = view.push(text(error)); }
-        if let Some(notice) = &self.bookmark_notice { view = view.push(text(notice).size(14)); }
-        if let Some(notice) = &self.link_notice { view = view.push(text(notice).size(14)); }
-        if !font_settings_ready { view = view.push(text(font_status).size(12)); }
-        if self.path.is_none() { view = view.push(text("Buka Menu → File & penanda untuk memilih file.").size(14).color(crate::mockup_style::muted(theme))); }
-
-        let contents = self.sections.get(self.section).map(String::as_str).unwrap_or("");
-        let content: Element<'_, Message> = if self.is_markdown && !self.show_source {
-            markdown::view(
-                &self.markdown_items,
-                markdown::Settings::with_text_size(self.font_size),
-                markdown::Style::from_palette(theme.palette()),
-            )
-            .map(Message::LinkClicked)
-        } else {
-            text(contents).size(self.font_size).into()
-        };
-        let revision = self.scroll_revision;
-        let document = container(content).width(Length::Fill).max_width(900);
-        let reader = scrollable(container(document).width(Length::Fill).center_x(Length::Fill))
-            .id(scrollable::Id::new(SCROLL_ID))
-            .on_scroll(move |viewport| Message::Scrolled {
-                revision,
-                percent: scroll_percentage(viewport.absolute_offset().y, viewport.bounds().height, viewport.content_bounds().height),
-            })
-            .height(Length::Fill).width(Length::Fill);
-        let panel: Element<'_, Message> = if self.show_tools { scrollable(tools).height(Length::Fill).into() } else { column![].into() };
-        view = view.push(row![
-            container(panel).width(if self.show_tools { 220_u16 } else { 0_u16 }).height(Length::Fill),
-            container(reader).width(Length::Fill).height(Length::Fill),
-        ].spacing(if self.show_tools { 16.0 } else { 0.0 }).height(Length::Fill));
-        view.into()
+        tools.into()
     }
+
 }
 
 // Percentage of the scrollable distance, not a measured reading completion.
@@ -1536,6 +1535,7 @@ mod tests {
         assert_eq!(app.reader.tool_section, Some(ToolSection::Navigation));
         let _ = app.update(AppMessage::Reader(Message::ToggleToolSection(ToolSection::File)));
         assert_eq!(app.reader.tool_section, Some(ToolSection::File));
+        drop(app.reader.tools_view(true, ""));
         drop(app.view());
         let _ = app.update(AppMessage::Reader(Message::AskRemoveBookmark));
         let _ = app.update(AppMessage::Reader(Message::ToggleTools));

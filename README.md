@@ -48,17 +48,16 @@ Highlighting aktif untuk draft baru dan file `.md`/`.markdown` (termasuk huruf
 besar); file TXT ditampilkan sebagai teks biasa. Warna editor menggunakan tema
 highlighter gelap bawaan Iced yang berbeda dari palet tema aplikasi. Preview memakai isi editor saat ini dan
 tidak menyimpan file atau membuka tautan secara otomatis. Secara default Writer
-menampilkan kanvas editor, dengan tombol **Menu** dan status draft di atas. Buka
-**Menu** untuk navigasi, mode fokus, dan Zen. Peralatan Writer berada di panel
-samping yang dikelompokkan menjadi **File**, **Proyek & chapter**, dan **Target
-draft**; buka satu kelompok sesuai kebutuhan. Dalam daftar chapter, tombol **⋯**
-menampilkan pilihan judul, urutan, dan hapus untuk chapter tersebut. **Tutup menu**
-kembali ke tampilan sederhana. Shortcut tetap tersedia.
-Menu tidak dapat ditutup saat ada edit catatan/target harian yang belum disimpan;
-simpan atau batalkan dulu. Konfirmasi penyimpanan dan peringatan tetap muncul dalam
-tampilan sederhana. Tombol **Mode fokus** di menu Writer menyembunyikan sidebar; tekan **Keluar mode fokus** untuk
-menampilkannya kembali. Mode fokus tidak mengaktifkan fullscreen dan otomatis
-berakhir saat berpindah halaman. Shortcut navigasi tetap tersedia. Writer juga
+menampilkan hanya kanvas editor. Untuk membuka panel, arahkan kursor ke pojok kiri
+atas hingga **Menu** muncul, lalu klik; atau tekan **Ctrl+M**. Navigasi dan peralatan
+berada dalam satu panel, dikelompokkan menjadi **File**, **Proyek & chapter**, dan
+**Target draft**. Tombol **...** di chapter menampilkan pilihan judul, urutan, dan
+hapus. Gunakan **Tutup** atau Ctrl+M untuk kembali ke kanvas. Status draft ada di
+panel; konfirmasi, kesalahan, dan peringatan tetap terlihat di kanvas ketika perlu.
+Panel tidak dapat ditutup saat ada edit catatan/target harian yang belum disimpan;
+simpan atau batalkan dulu. **Mode fokus** menyembunyikan navigasi halaman di dalam
+panel; pilih **Keluar mode fokus** untuk mengembalikannya. Mode fokus tidak
+mengaktifkan fullscreen dan otomatis berakhir saat berpindah halaman. Writer juga
 menyediakan target jumlah kata per draft dan progress bar; target hanya berlaku
 selama sesi dan direset ketika draft baru dibuat atau sebuah file berhasil dibuka.
 Target menghitung seluruh isi draft berdasarkan pemisah whitespace, termasuk
@@ -77,10 +76,10 @@ antar-sesi. Permintaan fullscreen bergantung pada dukungan compositor/window
 manager; tombol membaca mode jendela saat ditekan, tetapi perubahan eksternal atau
 kompositor dapat memengaruhi hasilnya. Mengubah ukuran tampilan dapat menggeser
 teks Reader dan membatalkan pengukuran gulir sebelumnya.
-Reader juga dimulai dengan tampilan baca sederhana. **Menu** membuka navigasi dan
-panel samping dengan kelompok **File & penanda**, **Tampilan**, **Daftar isi &
+Reader juga dimulai dengan bidang baca tanpa kontrol. Menu pojok kiri atas atau
+**Ctrl+M** membuka satu panel navigasi dan peralatan dengan kelompok **File & penanda**, **Tampilan**, **Daftar isi &
 bagian** (EPUB), dan **Cari**. Kontrol tidak ditumpuk di atas teks; buka satu
-kelompok yang dibutuhkan lalu gunakan **Tutup menu** untuk kembali membaca.
+kelompok yang dibutuhkan lalu gunakan **Tutup** atau Ctrl+M untuk kembali membaca.
 Membuka atau menutup menu mencoba memulihkan posisi gulir yang sudah terukur secara
 perkiraan; jika posisi belum terukur, posisinya mungkin bergeser.
 Reader dapat membuka file EPUB, TXT/Markdown UTF-8, menggulir teks, dan mengatur
@@ -88,7 +87,7 @@ ukuran font (12–32). Tombol A+/A− menyimpan ukuran secara lokal dan menerapk
 setelah penyimpanan berhasil; ukuran dipulihkan saat aplikasi dibuka ulang.
 Selama Settings dimuat/disimpan atau gagal dimuat, tombol font dinonaktifkan.
 Jika Settings gagal dimuat, perbaiki file dan gunakan **Coba muat ulang Settings**;
-jika penyimpanan gagal, ukuran tetap dan tombol dapat dicoba lagi. **Mode fokus** di Reader juga menyembunyikan sidebar tanpa fullscreen;
+jika penyimpanan gagal, ukuran tetap dan tombol dapat dicoba lagi. **Mode fokus** di Reader juga menyembunyikan navigasi halaman dalam panel tanpa fullscreen;
 berpindah halaman mengakhirinya. Mengubah lebar area baca dapat menggeser posisi
 teks karena pembungkusan ulang; indikator gulir menjadi `—` hingga terukur lagi. Posisi gulir ditampilkan untuk dokumen teks atau bagian EPUB saat
 konten dapat digulir; tanda `—` berarti posisi belum tersedia. Angka tersebut
@@ -161,7 +160,7 @@ berupa UTF-8 dan tidak boleh terdaftar dua kali. Pemeriksaan file bukan pengunci
 file dapat berubah setelah dipilih.
 
 Panel chapter menampilkan satu akar folder proyek yang dapat dilipat; chapter
-adalah daun di bawahnya. Pegang simbol **⋮⋮** di samping chapter dan lepaskan di
+adalah daun di bawahnya. Pegang simbol **::** di samping chapter dan lepaskan di
 chapter tujuan untuk memindahkan chapter ke posisi tujuan dalam daftar. Lepas di
 luar daftar, tekan Escape, atau pilih **Batal geser** untuk membatalkan. Tombol
 **Atas/Bawah** tetap tersedia sebagai alternatif. Perubahan hanya menyimpan urutan
@@ -461,6 +460,7 @@ dan database baru dibuat dengan izin 0600 di Unix.
 | `F11` | Minta masuk/keluar fullscreen |
 | `Ctrl+1`, `Ctrl+2`, `Ctrl+3` | Buka Library, Reader, atau Writer |
 | `Ctrl+,` | Buka Settings |
+| `Ctrl+M` | Buka atau tutup panel Reader/Writer |
 | `Ctrl+PageUp`, `Ctrl+PageDown` | Bagian EPUB sebelumnya atau berikutnya di Reader |
 | `Ctrl+N`, `Ctrl+O` | Draft baru atau buka file di Writer |
 | `Ctrl+S`, `Ctrl+Shift+S` | Simpan atau simpan sebagai di Writer |

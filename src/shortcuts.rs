@@ -13,6 +13,7 @@ pub enum Shortcut {
     PreviousSection,
     NextSection,
     ToggleFullscreen,
+    ToggleMenu,
 }
 
 /// Linux shortcuts intentionally exclude Alt/AltGr and Super combinations.
@@ -43,6 +44,7 @@ pub fn from_key(key: Key<&str>, modifiers: Modifiers) -> Option<Shortcut> {
         "2" => Some(Shortcut::Reader),
         "3" => Some(Shortcut::Writer),
         "," => Some(Shortcut::Settings),
+        _ if key.eq_ignore_ascii_case("m") => Some(Shortcut::ToggleMenu),
         _ if key.eq_ignore_ascii_case("n") => Some(Shortcut::NewDraft),
         _ if key.eq_ignore_ascii_case("o") => Some(Shortcut::Open),
         _ if key.eq_ignore_ascii_case("s") => Some(Shortcut::Save),
@@ -61,6 +63,7 @@ mod tests {
         assert_eq!(from_key(Key::Character("2"), ctrl), Some(Shortcut::Reader));
         assert_eq!(from_key(Key::Character("3"), ctrl), Some(Shortcut::Writer));
         assert_eq!(from_key(Key::Character(","), ctrl), Some(Shortcut::Settings));
+        assert_eq!(from_key(Key::Character("m"), ctrl), Some(Shortcut::ToggleMenu));
         assert_eq!(from_key(Key::Character("n"), ctrl), Some(Shortcut::NewDraft));
         assert_eq!(from_key(Key::Character("o"), ctrl), Some(Shortcut::Open));
         assert_eq!(from_key(Key::Character("s"), ctrl), Some(Shortcut::Save));

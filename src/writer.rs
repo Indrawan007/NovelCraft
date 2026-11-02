@@ -627,30 +627,11 @@ impl Writer {
     }
 
     pub fn view<'a>(&'a self, theme: &Theme) -> Element<'a, Message> {
-        let mut new_draft = button("Draft baru");
-        let mut open = button("Buka");
-        let mut save = button("Simpan");
-        let mut save_as = button("Simpan sebagai");
-        let mut preview = button(if self.show_preview { "Tutup preview" } else { "Preview" });
-        let mut autosave = button(if self.autosave_enabled() { "Matikan auto-save" } else { "Aktifkan auto-save" });
-        if !self.controls_blocked() {
-            new_draft = new_draft.on_press(Message::NewDraft);
-            open = open.on_press(Message::Open);
-            save = save.on_press(Message::Save);
-            save_as = save_as.on_press(Message::SaveAs);
-            preview = preview.on_press(Message::TogglePreview);
-            if self.autosave_enabled() { autosave = autosave.on_press(Message::DisableAutosave); }
-            else if self.path.is_some() && self.saved_contents.is_some() { autosave = autosave.on_press(Message::EnableAutosave); }
-        }
-
-        let words = self.word_count;
-
         let mut editor = text_editor(&self.content)
             .height(Length::Fill)
             .size(18)
             .line_height(iced::widget::text::LineHeight::Relative(1.6))
             .padding([24, 30])
-            .placeholder("Mulai menulis…")
             .style(crate::mockup_style::writer_editor)
             .highlight(self.syntax_token(), highlighter::Theme::Base16Ocean)
             .key_binding(editor_key_binding);
@@ -775,6 +756,28 @@ impl Writer {
             let canvas = container(editor).width(Length::Fill).height(Length::Fill).max_width(900);
             container(canvas).width(Length::Fill).height(Length::Fill).center_x(Length::Fill).into()
         };
+        view = view.push(container(editing_area).width(Length::Fill).height(Length::Fill));
+        view.into()
+    }
+    pub(crate) fn tools_view<'a>(&'a self, theme: &Theme) -> Element<'a, Message> {
+        let mut new_draft = button("Draft baru");
+        let mut open = button("Buka");
+        let mut save = button("Simpan");
+        let mut save_as = button("Simpan sebagai");
+        let mut preview = button(if self.show_preview { "Tutup preview" } else { "Preview" });
+        let mut autosave = button(if self.autosave_enabled() { "Matikan auto-save" } else { "Aktifkan auto-save" });
+        if !self.controls_blocked() {
+            new_draft = new_draft.on_press(Message::NewDraft);
+            open = open.on_press(Message::Open);
+            save = save.on_press(Message::Save);
+            save_as = save_as.on_press(Message::SaveAs);
+            preview = preview.on_press(Message::TogglePreview);
+            if self.autosave_enabled() { autosave = autosave.on_press(Message::DisableAutosave); }
+            else if self.path.is_some() && self.saved_contents.is_some() { autosave = autosave.on_press(Message::EnableAutosave); }
+        }
+
+        let words = self.word_count;
+
         let mut target_input = text_input("mis. 50000", &self.target_input).width(140);
         if !self.controls_blocked() {
             target_input = target_input.on_input(Message::TargetChanged);
@@ -806,7 +809,7 @@ impl Writer {
                 attach = attach.on_press(Message::AttachChapter);
             }
             project_panel = project_panel.push(title).push(row![add.style(crate::mockup_style::secondary), attach.style(crate::mockup_style::secondary)].spacing(4).wrap());
-            let mut tree_toggle = button(text(if self.chapter_tree_collapsed { "▸ Folder proyek" } else { "▾ Folder proyek" }).size(13)).width(Length::Fill);
+            let mut tree_toggle = button(text(if self.chapter_tree_collapsed { "[+] Folder proyek" } else { "[-] Folder proyek" }).size(13)).width(Length::Fill);
             if !self.controls_blocked() { tree_toggle = tree_toggle.on_press(Message::ToggleChapterTree); }
             project_panel = project_panel.push(tree_toggle.style(crate::mockup_style::navigation_menu));
             if let Some(index) = self.dragging_chapter {
@@ -820,7 +823,7 @@ impl Writer {
                     let label = format!("{:02}. {}{}", index + 1, chapter.title, if active { " (terbuka)" } else { "" });
                     let mut open_chapter = button(text(label).size(13)).width(Length::Fill).style(crate::mockup_style::navigation_menu);
                     if !self.controls_blocked() { open_chapter = open_chapter.on_press(Message::OpenChapter(index)); }
-                    let mut handle = mouse_area(container(text("⋮⋮").size(16)).padding([8, 4])).interaction(iced::mouse::Interaction::Grab);
+                    let mut handle = mouse_area(container(text("::").size(16)).padding([8, 4])).interaction(iced::mouse::Interaction::Grab);
                     if !self.controls_blocked() { handle = handle.on_press(Message::StartChapterDrag(index)); }
                     let mut rename = button(text("Judul").size(11));
                     let mut up = button(text("Atas").size(11));
@@ -832,9 +835,9 @@ impl Writer {
                         if index + 1 < project.chapters().len() { down = down.on_press(Message::MoveChapterDown(index)); }
                         remove = remove.on_press(Message::RemoveChapter(index));
                     }
-                    let mut more = button(text("⋯").size(15)).style(crate::mockup_style::navigation_menu);
+                    let mut more = button(text("...").size(15)).style(crate::mockup_style::navigation_menu);
                     if !self.controls_blocked() { more = more.on_press(Message::ToggleChapterActions(index)); }
-                    let mut entry = column![row![text("└").size(12), handle, open_chapter, more].spacing(3).align_y(iced::Alignment::Center)].spacing(3);
+                    let mut entry = column![row![handle, open_chapter, more].spacing(3).align_y(iced::Alignment::Center)].spacing(3);
                     if self.chapter_actions == Some(index) {
                         entry = entry.push(row![rename.style(crate::mockup_style::secondary), up.style(crate::mockup_style::secondary), down.style(crate::mockup_style::secondary), remove.style(crate::mockup_style::secondary)].spacing(4).padding(iced::Padding { bottom: 4.0, ..iced::Padding::default() }).wrap());
                     }
@@ -848,8 +851,8 @@ impl Writer {
             project_panel = project_panel.push(text("Buat atau buka folder proyek untuk menyimpan chapter sebagai file Markdown.").size(12));
         }
         let section_button = |label: &'static str, section: ToolSection| {
-            let arrow = if self.tool_section == Some(section) { "▾" } else { "▸" };
-            let button = button(text(format!("{arrow}  {label}")).size(13)).width(Length::Fill).style(crate::mockup_style::navigation_menu);
+            let marker = if self.tool_section == Some(section) { "-" } else { "+" };
+            let button = button(text(format!("{marker}   {label}")).size(13)).width(Length::Fill).style(crate::mockup_style::navigation_menu);
             if !self.controls_blocked() { button.on_press(Message::ToggleToolSection(section)) } else { button }
         };
         let mut tools = column![section_button("File", ToolSection::File)].spacing(6).width(Length::Fill);
@@ -873,13 +876,9 @@ impl Writer {
                 tools = tools.push(text("Target harus berupa angka 1–1.000.000.000.").size(12));
             }
         }
-        let panel: Element<'_, Message> = if self.show_tools { scrollable(tools).height(Length::Fill).into() } else { column![].into() };
-        view = view.push(row![
-            container(panel).width(if self.show_tools { 220_u16 } else { 0_u16 }).height(Length::Fill),
-            container(editing_area).width(Length::Fill).height(Length::Fill),
-        ].spacing(if self.show_tools { 16.0 } else { 0.0 }).height(Length::Fill));
-        view.into()
+        tools.into()
     }
+
 }
 
 fn word_delta(before: &str, after: &str) -> i64 {
@@ -1202,6 +1201,7 @@ mod tests {
         assert_eq!(writer.tool_section, Some(ToolSection::File));
         let _ = writer.update(Message::ToggleToolSection(ToolSection::Project));
         assert_eq!(writer.tool_section, Some(ToolSection::Project));
+        drop(writer.tools_view(&Theme::Nord));
         let _ = writer.update(Message::ToggleChapterActions(0));
         assert_eq!(writer.chapter_actions, None); // No project/chapter.
         drop(writer.view(&Theme::Nord));

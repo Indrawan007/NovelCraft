@@ -11,7 +11,7 @@ mod shortcuts;
 mod mockup_style;
 mod writer;
 
-use iced::widget::{button, column, container, horizontal_space, row, text, vertical_space, Column, Space};
+use iced::widget::{button, column, container, horizontal_space, pick_list, row, scrollable, stack, text, vertical_space, Column, Space};
 use iced::{event, keyboard, window, Element, Length, Subscription, Task, Theme};
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -158,6 +158,10 @@ impl ThemeChoice {
             Self::Dracula => Theme::Dracula,
         }
     }
+}
+
+impl std::fmt::Display for ThemeChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(self.label()) }
 }
 
 #[derive(Debug, Clone)]
@@ -444,6 +448,8 @@ impl NovelCraft {
                     Shortcut::Writer => Message::Navigate(Page::Writer),
                     Shortcut::Settings => Message::Navigate(Page::Settings),
                     Shortcut::ToggleFullscreen => Message::ToggleFullscreen,
+                    Shortcut::ToggleMenu if self.page == Page::Writer && !self.zen_mode => Message::Writer(writer::Message::ToggleTools),
+                    Shortcut::ToggleMenu if self.page == Page::Reader => Message::Reader(reader::Message::ToggleTools),
                     Shortcut::NewDraft if self.page == Page::Writer => Message::Writer(writer::Message::NewDraft),
                     Shortcut::Open if self.page == Page::Writer => Message::Writer(writer::Message::Open),
                     Shortcut::Save if self.page == Page::Writer => Message::Writer(writer::Message::Save),
@@ -539,34 +545,44 @@ impl NovelCraft {
     }
 
     fn settings_view(&self) -> Element<'_, Message> {
+        let theme = self.theme_choice.iced_theme();
+        let selector: Element<'_, Message> = if self.settings_loaded && !self.settings_busy {
+            pick_list(ThemeChoice::ALL.to_vec(), Some(self.theme_choice), Message::SelectTheme)
+                .width(210).padding([8, 12]).style(mockup_style::theme_select).into()
+        } else {
+            container(text(self.theme_choice.label()).size(13).color(mockup_style::muted(&theme)))
+                .width(210).padding([8, 12]).style(mockup_style::card).into()
+        };
         let mut content = column![
-            text("Settings").size(32),
-            text("Tema gelap").size(20),
-            text("Pilihan disimpan secara lokal; tema berubah setelah penyimpanan berhasil.").size(14),
-        ]
-        .spacing(12);
-        if self.settings_busy {
-            content = content.push(text("Memproses Settings...").size(14));
-        }
+            text("Settings").size(30),
+            text("Pengaturan tersimpan secara lokal di perangkat ini.").size(13).color(mockup_style::muted(&theme)),
+            container(text("APPEARANCE").size(11).color(mockup_style::subtle(&theme)))
+                .padding(iced::Padding { top: 36.0, bottom: 12.0, ..iced::Padding::default() }),
+            container(row![
+                column![text("Tema").size(15), text("Warna tampilan aplikasi").size(12).color(mockup_style::muted(&theme))].spacing(4).width(Length::Fill),
+                selector,
+            ].spacing(20).align_y(iced::Alignment::Center).wrap())
+                .padding([18, 0]).width(Length::Fill).style(mockup_style::setting_row),
+            text("Tema diterapkan setelah berhasil disimpan.").size(12).color(mockup_style::muted(&theme)),
+        ].spacing(8).width(Length::Fill);
+        if self.settings_busy { content = content.push(text("Memproses Settings...").size(13)); }
         if let Some(error) = &self.settings_error {
-            content = content.push(text(error).size(14));
+            content = content.push(text(error).size(13));
             if !self.settings_loaded && !self.settings_busy {
-                content = content.push(button("Coba muat ulang Settings").on_press(Message::LoadSettings));
+                content = content.push(button("Coba muat ulang Settings").style(mockup_style::secondary).on_press(Message::LoadSettings));
             }
         }
-        for choice in ThemeChoice::ALL {
-            let label = if choice == self.theme_choice {
-                format!("{} (aktif)", choice.label())
-            } else {
-                choice.label().to_owned()
-            };
-            let mut option = button(text(label));
-            if self.settings_loaded && !self.settings_busy && choice != self.theme_choice {
-                option = option.on_press(Message::SelectTheme(choice));
-            }
-            content = content.push(option);
-        }
-        content.into()
+        scrollable(container(container(content).max_width(640).width(Length::Fill))
+            .width(Length::Fill).center_x(Length::Fill).padding([32, 16]))
+            .height(Length::Fill).into()
+    }
+
+    fn reader_font_status(&self) -> &'static str {
+        if self.settings_busy { "Memproses Settings..." }
+        else if self.settings_error.is_some() && !self.settings_loaded { "Settings gagal dimuat; perbaiki dan muat ulang di Settings." }
+        else if self.settings_error.is_some() { "Settings gagal disimpan; coba lagi atau lihat Settings." }
+        else if !self.settings_loaded { "Settings belum dimuat." }
+        else { "Ukuran font disimpan secara lokal." }
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -581,134 +597,118 @@ impl NovelCraft {
             return container(column![bar, self.writer.zen_view(&theme).map(Message::Writer)].spacing(12))
                 .width(Length::Fill).height(Length::Fill).padding(32).into();
         }
+        let is_workspace = matches!(self.page, Page::Writer | Page::Reader);
         let compact = match self.page {
             Page::Writer => !self.writer.tools_visible(),
             Page::Reader => !self.reader.tools_visible(),
             _ => false,
         };
-        let sidebar_hidden = self.focus_mode || compact;
-        let mut navigation = Column::new().spacing(4);
+        // Writer/Reader use one unified menu; focus mode hides only page navigation.
+        let sidebar_hidden = compact || (self.focus_mode && !is_workspace);
+        let mut navigation = Column::new().spacing(4).width(Length::Fill);
         if !sidebar_hidden {
-            navigation = navigation.push(text("NAVIGATE").size(10).color(mockup_style::subtle(&theme)));
-            for page in Page::ALL {
-                if page == Page::Settings {
-                    navigation = navigation.push(container(text("CONFIG").size(10).color(mockup_style::subtle(&theme))).padding(iced::Padding { top: 16.0, bottom: 4.0, ..iced::Padding::default() }));
-                }
-                let selected = self.page == page;
-                let marker = if selected { theme.palette().primary } else { iced::Color::TRANSPARENT };
-                let nav_label = row![
-                    container(Space::new(3, 16)).style(move |_| container::Style::default().background(marker).border(iced::Border { radius: 2.0.into(), ..iced::Border::default() })),
-                    text(page.title()).size(13),
-                    horizontal_space(),
-                    text(page.shortcut_hint()).size(10).color(mockup_style::subtle(&theme)),
-                ].align_y(iced::Alignment::Center).spacing(6);
-                navigation = navigation.push(
-                    button(nav_label).width(Length::Fill).padding([9, 8])
-                        .style(move |theme, status| mockup_style::navigation(theme, status, selected))
-                        .on_press(Message::Navigate(page)),
-                );
+            if is_workspace {
+                let mut close = button(text("Tutup").size(12)).style(mockup_style::navigation_menu);
+                let action = match self.page {
+                    Page::Writer if self.writer.can_toggle_tools() => Some(Message::Writer(writer::Message::ToggleTools)),
+                    Page::Reader if self.reader.can_toggle_tools() => Some(Message::Reader(reader::Message::ToggleTools)),
+                    _ => None,
+                };
+                if let Some(action) = action { close = close.on_press(action); }
+                let status = if self.page == Page::Writer { self.writer.compact_status() } else { self.reader.compact_status() };
+                navigation = navigation.push(row![text("novelcraft").size(16), horizontal_space(), close].align_y(iced::Alignment::Center));
+                navigation = navigation.push(text(status).size(12).color(mockup_style::muted(&theme)));
+                navigation = navigation.push(Space::new(1, 16));
             }
-            if !matches!(self.page, Page::Reader | Page::Writer) {
+            if !self.focus_mode {
+                navigation = navigation.push(text("NAVIGASI").size(10).color(mockup_style::subtle(&theme)));
+                for page in Page::ALL {
+                    let selected = self.page == page;
+                    let marker = if selected { theme.palette().primary } else { iced::Color::TRANSPARENT };
+                    let label = row![
+                        container(Space::new(3, 16)).style(move |_| container::Style::default().background(marker).border(iced::Border { radius: 2.0.into(), ..iced::Border::default() })),
+                        text(page.title()).size(13), horizontal_space(),
+                        text(page.shortcut_hint()).size(10).color(mockup_style::subtle(&theme)),
+                    ].align_y(iced::Alignment::Center).spacing(6);
+                    navigation = navigation.push(button(label).width(Length::Fill).padding([9, 8])
+                        .style(move |theme, status| mockup_style::navigation(theme, status, selected))
+                        .on_press(Message::Navigate(page)));
+                }
+            }
+            if is_workspace {
+                navigation = navigation.push(container(text(if self.page == Page::Writer { "WRITER" } else { "READER" }).size(10).color(mockup_style::subtle(&theme)))
+                    .padding(iced::Padding { top: 20.0, bottom: 6.0, ..iced::Padding::default() }));
+                let tools: Element<'_, Message> = if self.page == Page::Writer {
+                    self.writer.tools_view(&theme).map(Message::Writer)
+                } else {
+                    self.reader.tools_view(self.settings_loaded && !self.settings_busy, self.reader_font_status()).map(Message::Reader)
+                };
+                navigation = navigation.push(tools);
+                navigation = navigation.push(container(text("TAMPILAN").size(10).color(mockup_style::subtle(&theme)))
+                    .padding(iced::Padding { top: 20.0, bottom: 6.0, ..iced::Padding::default() }));
+                let mut fullscreen = button(text("Fullscreen  (F11)").size(13)).width(Length::Fill).style(mockup_style::navigation_menu);
+                if !self.fullscreen_pending { fullscreen = fullscreen.on_press(Message::ToggleFullscreen); }
+                let focus = button(text(if self.focus_mode { "Keluar mode fokus" } else { "Mode fokus" }).size(13))
+                    .width(Length::Fill).style(mockup_style::navigation_menu).on_press(Message::ToggleFocusMode);
+                navigation = navigation.push(fullscreen).push(focus);
+                if self.page == Page::Writer {
+                    let mut zen = button(text("Mode Zen").size(13)).width(Length::Fill).style(mockup_style::navigation_menu);
+                    if self.writer.can_enter_zen() && !self.fullscreen_pending { zen = zen.on_press(Message::EnterZen); }
+                    navigation = navigation.push(zen);
+                }
+            } else {
                 let draft = self.writer.draft_stats_label();
                 navigation = navigation.push(vertical_space()).push(
-                    container(column![
-                        text("DRAFT SAAT INI").size(10).color(mockup_style::subtle(&theme)),
+                    container(column![text("DRAFT SAAT INI").size(10).color(mockup_style::subtle(&theme)),
                         text(draft).size(18).color(theme.palette().primary),
                         text("Target per draft · sesi ini").size(11).color(mockup_style::muted(&theme)),
-                    ].spacing(5)).width(Length::Fill).padding(12).style(mockup_style::card),
-                );
-            } else {
-                navigation = navigation.push(vertical_space());
+                    ].spacing(5)).width(Length::Fill).padding(12).style(mockup_style::card));
+                navigation = navigation.push(text("v0.1.0 · lokal").size(10).color(mockup_style::subtle(&theme)));
             }
-            navigation = navigation.push(text("v0.1.0 · lokal").size(10).color(mockup_style::subtle(&theme)));
         }
-
-        // Preserve the sidebar's place in the widget tree for editor state.
-        let sidebar = container(navigation)
-            .width(if sidebar_hidden { 0_u16 } else { 200_u16 })
+        let sidebar_content: Element<'_, Message> = if is_workspace && !sidebar_hidden {
+            scrollable(navigation).height(Length::Fill).into()
+        } else { navigation.into() };
+        let sidebar = container(sidebar_content)
+            .width(if sidebar_hidden { 0_u16 } else if is_workspace { 280_u16 } else { 200_u16 })
             .height(Length::Fill)
-            .padding(if sidebar_hidden { iced::Padding::default() } else { iced::Padding { top: 24.0, right: 10.0, bottom: 24.0, left: 10.0 } })
+            .padding(if sidebar_hidden { iced::Padding::default() } else { iced::Padding { top: 20.0, right: 14.0, bottom: 20.0, left: 14.0 } })
             .style(mockup_style::chrome);
-
-        let page: Element<'_, Message> = if self.page == Page::Library {
-            self.library.view(&theme).map(Message::Library)
-        } else if self.page == Page::Writer {
-            self.writer.view(&theme).map(Message::Writer)
-        } else if self.page == Page::Reader {
-            let status = if self.settings_busy {
-                "Memproses Settings..."
-            } else if self.settings_error.is_some() && !self.settings_loaded {
-                "Settings gagal dimuat; perbaiki dan muat ulang di Settings."
-            } else if self.settings_error.is_some() {
-                "Settings gagal disimpan; coba lagi atau lihat Settings."
-            } else if !self.settings_loaded {
-                "Settings belum dimuat."
-            } else {
-                "Ukuran font disimpan secara lokal."
-            };
-            self.reader.view(&theme, self.settings_loaded && !self.settings_busy, status).map(Message::Reader)
-        } else {
-            self.settings_view()
+        let page: Element<'_, Message> = match self.page {
+            Page::Library => self.library.view(&theme).map(Message::Library),
+            Page::Writer => self.writer.view(&theme).map(Message::Writer),
+            Page::Reader => self.reader.view(&theme, self.settings_loaded && !self.settings_busy, self.reader_font_status()).map(Message::Reader),
+            Page::Settings => self.settings_view(),
         };
-
-        let content = container(page)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(if self.page == Page::Library { [40, 48] } else if matches!(self.page, Page::Writer | Page::Reader) { [8, 16] } else { [24, 32] });
-
-        let mut fullscreen = button(text("Fullscreen (F11)").size(12)).style(button::secondary);
-        if !self.fullscreen_pending {
-            fullscreen = fullscreen.on_press(Message::ToggleFullscreen);
-        }
-        let mut menu = button(text(if compact { "☰  Menu" } else { "Tutup menu" }).size(12)).style(mockup_style::navigation_menu);
-        let menu_action = match self.page {
-            Page::Writer if self.writer.can_toggle_tools() => Some(Message::Writer(writer::Message::ToggleTools)),
-            Page::Reader if self.reader.can_toggle_tools() => Some(Message::Reader(reader::Message::ToggleTools)),
+        let content = container(page).width(Length::Fill).height(Length::Fill)
+            .padding(if self.page == Page::Library { [40, 48] } else if is_workspace { [8, 16] } else { [24, 32] });
+        let mut fullscreen = button(text("Fullscreen (F11)").size(12)).style(mockup_style::secondary);
+        if !self.fullscreen_pending { fullscreen = fullscreen.on_press(Message::ToggleFullscreen); }
+        let mut bar = row![
+            text("novelcraft").size(14).font(iced::Font::MONOSPACE),
+            text(format!("/ {}", self.page.title().to_lowercase())).size(12).color(mockup_style::muted(&theme)),
+            horizontal_space(), fullscreen,
+        ].align_y(iced::Alignment::Center).spacing(12);
+        if let Some(notice) = &self.fullscreen_notice { bar = bar.push(text(notice).size(12)); }
+        let topbar: Element<'_, Message> = if is_workspace {
+            if let Some(notice) = &self.fullscreen_notice {
+                container(text(notice).size(12)).padding([8, 16]).width(Length::Fill).into()
+            } else { container(Space::new(0, 0)).height(0).into() }
+        } else {
+            container(bar).width(Length::Fill).padding([0, 20]).center_y(48).style(mockup_style::chrome).into()
+        };
+        let base = column![topbar, row![sidebar, content].height(Length::Fill)].height(Length::Fill);
+        let mut trigger = button(text("Menu").size(12)).width(76).height(36).style(mockup_style::menu_trigger);
+        let action = match self.page {
+            Page::Writer if compact && self.writer.can_toggle_tools() => Some(Message::Writer(writer::Message::ToggleTools)),
+            Page::Reader if compact && self.reader.can_toggle_tools() => Some(Message::Reader(reader::Message::ToggleTools)),
             _ => None,
         };
-        if let Some(action) = menu_action { menu = menu.on_press(action); }
-        let mut topbar_content = if compact {
-            let status = if self.page == Page::Writer { self.writer.compact_status() } else { self.reader.compact_status() };
-            row![menu, horizontal_space(), text(status).size(12).color(mockup_style::muted(&theme))]
-                .align_y(iced::Alignment::Center).spacing(10)
-        } else {
-            let mut bar = row![
-                container(Space::new(6, 6)).style(|theme: &Theme| container::Style::default().background(theme.palette().primary).border(iced::Border { radius: 3.0.into(), ..iced::Border::default() })),
-                text("novelcraft").size(14).font(iced::Font::MONOSPACE),
-                container(Space::new(1, 16)).style(|theme: &Theme| container::Style::default().background(theme.palette().text.scale_alpha(0.10))),
-                text(format!("~ / {}", self.page.title().to_lowercase())).size(12).color(mockup_style::muted(&theme)),
-                horizontal_space(),
-                fullscreen,
-            ].align_y(iced::Alignment::Center).spacing(10);
-            if self.page == Page::Writer {
-                bar = bar.push(text(self.writer.compact_status()).size(12).color(mockup_style::muted(&theme)));
-            } else if self.page == Page::Reader {
-                bar = bar.push(text(self.reader.compact_status()).size(12).color(mockup_style::muted(&theme)));
-            }
-            if matches!(self.page, Page::Reader | Page::Writer) {
-                let label = if self.focus_mode { "Keluar mode fokus" } else { "Mode fokus" };
-                bar = bar.push(button(text(label).size(12)).style(button::secondary).on_press(Message::ToggleFocusMode));
-            }
-            if self.page == Page::Writer {
-                let mut zen = button(text("Mode Zen").size(12)).style(button::secondary);
-                if self.writer.can_enter_zen() && !self.fullscreen_pending { zen = zen.on_press(Message::EnterZen); }
-                bar = bar.push(zen);
-            }
-            if matches!(self.page, Page::Writer | Page::Reader) { bar = bar.push(menu); }
-            bar
-        };
-        if let Some(notice) = &self.fullscreen_notice {
-            topbar_content = topbar_content.push(text(notice).size(12));
-        }
-        let topbar = container(topbar_content)
-            .width(Length::Fill)
-            .padding([0, 20])
-            .center_y(if compact { 40 } else { 48 })
-            .style(mockup_style::chrome);
-
-        column![topbar, row![sidebar, content].height(Length::Fill)]
-            .height(Length::Fill)
-            .into()
+        let overlay: Element<'_, Message> = if let Some(action) = action {
+            trigger = trigger.on_press(action);
+            container(trigger).padding([4, 4]).into()
+        } else { Space::new(0, 0).into() };
+        stack![base, overlay].width(Length::Fill).height(Length::Fill).into()
     }
 }
 
@@ -828,6 +828,34 @@ mod tests {
         assert!(!app.fullscreen_pending);
         assert!(app.writer.has_unsaved_changes());
         assert!(app.focus_mode);
+    }
+
+    #[test]
+    fn menu_shortcut_opens_workspace_panel_and_respects_confirmations() {
+        use shortcuts::Shortcut;
+        let mut app = NovelCraft::default();
+        let _ = app.update(Message::Shortcut(Shortcut::ToggleMenu));
+        assert!(!app.writer.tools_visible()); // Library has no workspace menu.
+        let _ = app.update(Message::Navigate(Page::Writer));
+        make_draft_dirty(&mut app);
+        let _ = app.update(Message::Shortcut(Shortcut::ToggleMenu));
+        assert!(app.writer.tools_visible());
+        assert!(app.writer.has_unsaved_changes());
+        drop(app.view());
+        let _ = app.update(Message::Shortcut(Shortcut::ToggleMenu));
+        assert!(!app.writer.tools_visible());
+        let _ = app.update(Message::Writer(writer::Message::NewDraft));
+        let _ = app.update(Message::Shortcut(Shortcut::ToggleMenu));
+        assert!(!app.writer.tools_visible()); // The discard confirmation remains in view.
+        assert!(app.writer.has_unsaved_changes());
+        drop(app.view());
+        let _ = app.update(Message::Writer(writer::Message::CancelDiscard));
+        let _ = app.update(Message::Navigate(Page::Reader));
+        let _ = app.update(Message::Shortcut(Shortcut::ToggleMenu));
+        assert!(app.reader.tools_visible());
+        drop(app.view());
+        let _ = app.update(Message::Shortcut(Shortcut::ToggleMenu));
+        assert!(!app.reader.tools_visible());
     }
 
     #[test]

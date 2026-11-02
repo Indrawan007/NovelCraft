@@ -1,5 +1,5 @@
 //! Visual tokens adapted from mockup.html. Other saved themes keep their palettes.
-use iced::widget::{button, container, text_editor, text_input};
+use iced::widget::{button, container, pick_list, text_editor, text_input};
 use iced::{Border, Color, Theme};
 use std::sync::OnceLock;
 
@@ -54,6 +54,13 @@ pub fn card(theme: &Theme) -> container::Style {
     })
 }
 
+pub fn setting_row(theme: &Theme) -> container::Style {
+    container::Style::default().border(Border {
+        color: theme.palette().text.scale_alpha(0.10), width: 1.0,
+        ..Border::default()
+    })
+}
+
 pub fn navigation(theme: &Theme, status: button::Status, selected: bool) -> button::Style {
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
@@ -66,6 +73,27 @@ pub fn navigation(theme: &Theme, status: button::Status, selected: bool) -> butt
 
 pub fn navigation_menu(theme: &Theme, status: button::Status) -> button::Style {
     navigation(theme, status, false)
+}
+
+// The hot corner leaves the writing surface empty until hovered.
+pub fn menu_trigger(theme: &Theme, status: button::Status) -> button::Style {
+    if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+        navigation(theme, status, false)
+    } else {
+        button::Style { text_color: Color::TRANSPARENT, ..button::Style::default() }
+    }
+}
+
+pub fn theme_select(theme: &Theme, status: pick_list::Status) -> pick_list::Style {
+    let mut style = pick_list::default(theme, status);
+    style.background = surface(theme).into();
+    style.text_color = theme.palette().text;
+    style.handle_color = muted(theme);
+    style.border = Border {
+        color: if matches!(status, pick_list::Status::Hovered | pick_list::Status::Opened) { theme.palette().primary } else { theme.palette().text.scale_alpha(0.12) },
+        width: 1.0, radius: 6.0.into(),
+    };
+    style
 }
 
 pub fn search(theme: &Theme, status: text_input::Status) -> text_input::Style {
@@ -123,6 +151,17 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
 mod tests {
     use super::*;
     use iced::Background;
+
+    #[test]
+    fn menu_hot_corner_is_invisible_until_hovered() {
+        for theme in [mockup_theme(), Theme::Nord, Theme::Dark] {
+            let idle = menu_trigger(&theme, button::Status::Active);
+            let hovered = menu_trigger(&theme, button::Status::Hovered);
+            assert_eq!(idle.text_color, Color::TRANSPARENT);
+            assert!(idle.background.is_none());
+            assert!(hovered.text_color.a > 0.0);
+        }
+    }
 
     #[test]
     fn mockup_search_uses_subtle_border_and_visible_focus() {

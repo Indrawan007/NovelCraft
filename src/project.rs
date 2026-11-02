@@ -98,6 +98,10 @@ pub async fn add_chapter(mut project: Project, title: String) -> Result<Project,
     let mut number = 1_u64;
     let (name, mut file) = loop {
         let name = format!("chapter-{number}.md");
+        if project.manifest.chapters.iter().any(|chapter| chapter.file == name) {
+            number = number.checked_add(1).ok_or("Nomor chapter habis.")?;
+            continue;
+        }
         let mut options = tokio::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -151,6 +155,19 @@ mod tests {
         let reopened = open(dir.clone()).await.unwrap();
         assert_eq!(reopened.chapters().iter().map(|c| c.title.as_str()).collect::<Vec<_>>(), vec!["Prolog", "Bab dua"]);
         assert_eq!(reopened.chapter_path(0).unwrap(), project.chapter_path(0).unwrap());
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_indexed_chapter_name_is_not_reused() {
+        let dir = temp_dir();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let project = add_chapter(create(dir.clone()).await.unwrap(), "Satu".into()).await.unwrap();
+        tokio::fs::remove_file(project.chapter_path(0).unwrap()).await.unwrap();
+        let project = add_chapter(project, "Dua".into()).await.unwrap();
+        assert_eq!(project.chapter_path(1).unwrap().file_name().unwrap(), "chapter-2.md");
+        assert!(!project.chapter_path(0).unwrap().exists());
+        assert_eq!(open(dir.clone()).await.unwrap().chapters().len(), 2);
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 

@@ -342,7 +342,7 @@ impl NovelCraft {
             } else {
                 choice.label().to_owned()
             };
-            let mut option = button(label);
+            let mut option = button(text(label));
             if self.settings_loaded && !self.settings_busy && choice != self.theme_choice {
                 option = option.on_press(Message::SelectTheme(choice));
             }

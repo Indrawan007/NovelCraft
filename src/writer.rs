@@ -301,7 +301,7 @@ impl Writer {
             .spacing(8)
             .height(Length::Fill)
             .width(Length::FillPortion(1));
-            row![editor.width(Length::FillPortion(1)), preview_pane]
+            row![container(editor).width(Length::FillPortion(1)).height(Length::Fill), preview_pane]
                 .spacing(12)
                 .height(Length::Fill)
                 .into()

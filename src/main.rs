@@ -8,7 +8,7 @@ mod shortcuts;
 mod mockup_style;
 mod writer;
 
-use iced::widget::{button, column, container, horizontal_space, row, text, vertical_space, Column};
+use iced::widget::{button, column, container, horizontal_space, row, text, vertical_space, Column, Space};
 use iced::{event, keyboard, window, Element, Length, Subscription, Task, Theme};
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -477,7 +477,7 @@ impl NovelCraft {
         }
         for choice in ThemeChoice::ALL {
             let label = if choice == self.theme_choice {
-                format!("✓ {} (aktif)", choice.label())
+                format!("{} (aktif)", choice.label())
             } else {
                 choice.label().to_owned()
             };
@@ -504,9 +504,9 @@ impl NovelCraft {
                     navigation = navigation.push(container(text("CONFIG").size(10).color(mockup_style::subtle(&theme))).padding(iced::Padding { top: 16.0, bottom: 4.0, ..iced::Padding::default() }));
                 }
                 let selected = self.page == page;
-                let marker = if selected { "▏" } else { "  " };
+                let marker = if selected { theme.palette().primary } else { iced::Color::TRANSPARENT };
                 let nav_label = row![
-                    text(marker).color(theme.palette().primary),
+                    container(Space::new(3, 16)).style(move |_| container::Style::default().background(marker).border(iced::Border { radius: 2.0.into(), ..iced::Border::default() })),
                     text(page.title()).size(13),
                     horizontal_space(),
                     text(page.shortcut_hint()).size(10).color(mockup_style::subtle(&theme)),
@@ -532,7 +532,7 @@ impl NovelCraft {
         let sidebar = container(navigation)
             .width(if self.focus_mode { 0_u16 } else { 200_u16 })
             .height(Length::Fill)
-            .padding(if self.focus_mode { 0_u16 } else { 12_u16 })
+            .padding(if self.focus_mode { iced::Padding::default() } else { iced::Padding { top: 24.0, right: 10.0, bottom: 24.0, left: 10.0 } })
             .style(mockup_style::chrome);
 
         let page: Element<'_, Message> = if self.page == Page::Library {
@@ -566,9 +566,9 @@ impl NovelCraft {
             fullscreen = fullscreen.on_press(Message::ToggleFullscreen);
         }
         let mut topbar_content = row![
-            text("●").size(12).color(theme.palette().primary),
+            container(Space::new(6, 6)).style(|theme: &Theme| container::Style::default().background(theme.palette().primary).border(iced::Border { radius: 3.0.into(), ..iced::Border::default() })),
             text("novelcraft").size(14).font(iced::Font::MONOSPACE),
-            text("│").size(14).color(mockup_style::subtle(&theme)),
+            container(Space::new(1, 16)).style(|theme: &Theme| container::Style::default().background(theme.palette().text.scale_alpha(0.10))),
             text(format!("~ / {}", self.page.title().to_lowercase())).size(12).color(mockup_style::muted(&theme)),
             horizontal_space(),
             fullscreen,

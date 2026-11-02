@@ -288,8 +288,8 @@ impl Library {
     }
 
     pub fn view<'a>(&'a self, theme: &Theme) -> Element<'a, Message> {
-        let mut import = button(text("Import").size(13)).style(button::secondary);
-        let mut new_draft = button(text("Draft baru").size(13)).style(button::primary);
+        let mut import = button(text("Import").size(13)).padding([9, 16]).style(crate::mockup_style::secondary);
+        let mut new_draft = button(text("Draft baru").size(13)).padding([9, 16]).style(crate::mockup_style::primary);
         let mut reload = button(text("Muat ulang Library").size(12)).style(button::secondary);
         if !self.controls_blocked() {
             new_draft = new_draft.on_press(Message::NewDraft);
@@ -298,13 +298,13 @@ impl Library {
             import = import.on_press(Message::Import);
             reload = reload.on_press(Message::Reload);
         }
-        let mut search = text_input("Cari nama file...", &self.query).width(Length::Fill);
+        let mut search = text_input("Cari nama file...", &self.query).size(13).padding([9, 14]).width(Length::Fill).style(crate::mockup_style::search);
         if !self.controls_blocked() { search = search.on_input(Message::Search); }
         let mut view = column![
             text("Library").size(32),
             text(if self.loaded { format!("{} file · tersimpan di lokasi aslinya", self.books.len()) } else { "Memuat Library lokal".to_owned() })
                 .size(14).color(crate::mockup_style::muted(theme)),
-            row![search, import, new_draft].spacing(10),
+            row![container(search).width(Length::Fill).max_width(360), import, new_draft].align_y(iced::Alignment::Center).spacing(10),
         ]
         .spacing(12)
         .height(Length::Fill);

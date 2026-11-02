@@ -1,5 +1,5 @@
 //! Visual tokens adapted from mockup.html. Other saved themes keep their palettes.
-use iced::widget::{button, container};
+use iced::widget::{button, container, text_input};
 use iced::{Border, Color, Theme};
 use std::sync::OnceLock;
 
@@ -26,27 +26,109 @@ pub fn subtle(theme: &Theme) -> Color {
     if is_mockup(theme) { rgb(115, 110, 101) } else { theme.palette().text.scale_alpha(0.58) }
 }
 
+fn blend(base: Color, other: Color, amount: f32) -> Color {
+    Color::from_rgb(
+        base.r + (other.r - base.r) * amount,
+        base.g + (other.g - base.g) * amount,
+        base.b + (other.b - base.b) * amount,
+    )
+}
+
+fn raised(theme: &Theme) -> Color {
+    if is_mockup(theme) { rgb(20, 20, 20) }
+    else { blend(theme.palette().background, theme.palette().text, 0.04) }
+}
+
+fn surface(theme: &Theme) -> Color {
+    if is_mockup(theme) { rgb(26, 26, 26) }
+    else { blend(theme.palette().background, theme.palette().text, 0.08) }
+}
+
 pub fn chrome(theme: &Theme) -> container::Style {
-    let color = if is_mockup(theme) { rgb(20, 20, 20) } else { theme.extended_palette().background.weak.color };
-    container::Style::default().background(color)
+    container::Style::default().background(raised(theme))
 }
 
 pub fn card(theme: &Theme) -> container::Style {
-    let color = if is_mockup(theme) { rgb(20, 20, 20) } else { theme.extended_palette().background.weak.color };
-    container::Style::default().background(color).border(Border {
+    container::Style::default().background(raised(theme)).border(Border {
         color: theme.palette().text.scale_alpha(0.10), width: 1.0, radius: 10.0.into(),
     })
 }
 
 pub fn navigation(theme: &Theme, status: button::Status, selected: bool) -> button::Style {
-    if !is_mockup(theme) {
-        return if selected { button::secondary(theme, status) } else { button::text(theme, status) };
-    }
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
-        background: (selected || hovered).then(|| rgb(26, 26, 26).into()),
+        background: (selected || hovered).then(|| surface(theme).into()),
         text_color: if selected || hovered { theme.palette().text } else { muted(theme) },
         border: Border { radius: 6.0.into(), ..Border::default() },
         ..button::Style::default()
+    }
+}
+
+pub fn search(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let palette = theme.palette();
+    let disabled = status == text_input::Status::Disabled;
+    text_input::Style {
+        background: surface(theme).into(),
+        border: Border {
+            color: if status == text_input::Status::Focused { palette.primary }
+                else { palette.text.scale_alpha(0.05) },
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        icon: muted(theme),
+        placeholder: muted(theme),
+        value: if disabled { muted(theme) } else { palette.text },
+        selection: palette.primary.scale_alpha(0.3),
+    }
+}
+
+pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.palette();
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let disabled = status == button::Status::Disabled;
+    button::Style {
+        background: Some(if hovered { blend(surface(theme), palette.text, 0.05) } else { surface(theme) }.into()),
+        text_color: if disabled { muted(theme) } else { palette.text },
+        border: Border { color: palette.text.scale_alpha(0.10), width: 1.0, radius: 6.0.into() },
+        ..button::Style::default()
+    }
+}
+
+pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.palette();
+    let disabled = status == button::Status::Disabled;
+    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let accent = if hovered { blend(palette.primary, palette.text, 0.12) } else { palette.primary };
+    button::Style {
+        background: Some(if disabled { blend(surface(theme), accent, 0.25) } else { accent }.into()),
+        text_color: if disabled { muted(theme) } else { palette.background },
+        border: Border { radius: 6.0.into(), ..Border::default() },
+        ..button::Style::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::Background;
+
+    #[test]
+    fn mockup_search_uses_subtle_border_and_visible_focus() {
+        let theme = mockup_theme();
+        let normal = search(&theme, text_input::Status::Active);
+        let focused = search(&theme, text_input::Status::Focused);
+        assert_eq!(normal.background, Background::Color(rgb(26, 26, 26)));
+        assert!(normal.border.color.a < 0.1);
+        assert_eq!(focused.border.color, theme.palette().primary);
+        assert_eq!(normal.border.radius, 6.0.into());
+    }
+
+    #[test]
+    fn saved_dark_themes_keep_dark_chrome_and_disabled_controls() {
+        for theme in [Theme::Nord, Theme::TokyoNight, Theme::Dark, Theme::Dracula] {
+            let color = raised(&theme);
+            assert!(color.r < 0.5 && color.g < 0.5 && color.b < 0.5);
+            assert_eq!(primary(&theme, button::Status::Disabled).text_color, muted(&theme));
+        }
     }
 }

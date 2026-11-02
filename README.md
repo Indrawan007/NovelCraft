@@ -303,18 +303,23 @@ git clone https://github.com/Indrawan007/NovelCraft.git
 cd NovelCraft
 
 # Development build
-cargo run
+cargo run --locked
 
 # Pemeriksaan dan unit test
-cargo check --all-targets
-cargo test --all-targets
+cargo check --locked --all-targets
+cargo test --locked --all-targets
 
 # Release build (optimized)
-cargo build --release
+cargo build --release --locked
 
 # Binary ada di:
 ./target/release/novelcraft
 ```
+
+`Cargo.lock` disertakan agar build memakai versi dependensi yang sama dengan CI.
+Perbarui lockfile secara sengaja ketika mengubah dependensi; `--locked` akan
+gagal jika lockfile perlu diperbarui. Ini tidak menjamin binary identik di
+semua sistem atau menghilangkan kebutuhan dependency runtime sistem.
 
 ### Install via AUR *(coming soon)*
 
@@ -436,10 +441,10 @@ Jika ingin berkontribusi di masa depan:
 5. Buat Pull Request
 
 ### Development Guidelines
-- GitHub Actions menjalankan `cargo check --all-targets` dan `cargo test --all-targets` di Linux pada push dan pull request. Workflow juga dapat dijalankan secara manual.
+- GitHub Actions menjalankan `cargo check --locked --all-targets` dan `cargo test --locked --all-targets` di Linux pada push dan pull request. Workflow juga dapat dijalankan secara manual.
 - Gunakan `cargo clippy` sebelum commit
 - Format kode dengan `cargo fmt`
-- Test dengan `cargo test`
+- Test dengan `cargo test --locked`
 - Commit message mengikuti [Conventional Commits](https://conventionalcommits.org)
 
 ---

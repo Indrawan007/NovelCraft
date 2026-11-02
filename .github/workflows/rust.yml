@@ -49,6 +49,9 @@ jobs:
           exit "$status"
       - name: Temporary visual inspection
         run: |
+          exec > >(tee "$RUNNER_TEMP/visual-step.log") 2>&1
+          set -E
+          trap 'diagnostic=$(tail -n 25 "$RUNNER_TEMP/visual-step.log" | head -c 3000); diagnostic=${diagnostic//\%/\%25}; diagnostic=${diagnostic//$'\n'/\%0A}; printf "::error title=Visual inspection failure::%s\n" "$diagnostic"' ERR
           sudo apt-get install -y xvfb xdotool imagemagick mesa-vulkan-drivers
           cargo build --locked
           export WINIT_UNIX_BACKEND=x11

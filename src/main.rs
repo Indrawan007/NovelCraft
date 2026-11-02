@@ -108,10 +108,10 @@ impl Page {
 
     fn title(self) -> &'static str {
         match self {
-            Self::Library => "Library",
-            Self::Reader => "Reader",
-            Self::Writer => "Writer",
-            Self::Settings => "Settings",
+            Self::Library => "Koleksi",
+            Self::Reader => "Pembaca",
+            Self::Writer => "Penulis",
+            Self::Settings => "Pengaturan",
         }
     }
 
@@ -141,7 +141,7 @@ impl ThemeChoice {
 
     fn label(self) -> &'static str {
         match self {
-            Self::NovelCraft => "NovelCraft (mockup)",
+            Self::NovelCraft => "NovelCraft",
             Self::TokyoNight => "Tokyo Night",
             Self::Dark => "Dark",
             Self::Nord => "Nord",
@@ -267,7 +267,7 @@ impl NovelCraft {
             Message::ConfirmClose => Task::none(),
             Message::CancelClose => {
                 self.pending_close = None;
-                if self.page == Page::Reader {
+                if self.page == Page::Reader && !self.reader.is_busy() {
                     self.reader.take_restore_task().map(Message::Reader)
                 } else {
                     Task::none()
@@ -295,7 +295,7 @@ impl NovelCraft {
                     self.focus_mode = false;
                 }
                 self.page = page;
-                if page == Page::Reader && self.pending_close.is_none() {
+                if page == Page::Reader && self.pending_close.is_none() && !self.reader.is_busy() {
                     Task::batch([exit_zen, self.reader.take_restore_task().map(Message::Reader)])
                 } else if page == Page::Library {
                     Task::batch([
@@ -467,7 +467,7 @@ impl NovelCraft {
             Message::Reader(message) => {
                 let bookmark_saved = matches!(&message, reader::Message::BookmarkSaved(Ok(_)) | reader::Message::BookmarkRemoved(Ok(_)));
                 let task = self.reader.update(message).map(Message::Reader);
-                let restore = if self.page == Page::Reader && self.pending_close.is_none() {
+                let restore = if self.page == Page::Reader && self.pending_close.is_none() && !self.reader.is_busy() {
                     self.reader.take_restore_task().map(Message::Reader)
                 } else {
                     Task::none()
@@ -548,41 +548,67 @@ impl NovelCraft {
         let theme = self.theme_choice.iced_theme();
         let selector: Element<'_, Message> = if self.settings_loaded && !self.settings_busy {
             pick_list(ThemeChoice::ALL.to_vec(), Some(self.theme_choice), Message::SelectTheme)
-                .width(210).padding([8, 12]).style(mockup_style::theme_select).into()
+                .width(240).padding([9, 12]).style(mockup_style::theme_select).into()
         } else {
             container(text(self.theme_choice.label()).size(13).color(mockup_style::muted(&theme)))
-                .width(210).padding([8, 12]).style(mockup_style::card).into()
+                .width(240).padding([9, 12]).style(mockup_style::card).into()
         };
+
         let mut content = column![
-            text("Settings").size(30),
-            text("Pengaturan tersimpan secara lokal di perangkat ini.").size(13).color(mockup_style::muted(&theme)),
-            container(text("APPEARANCE").size(11).color(mockup_style::subtle(&theme)))
-                .padding(iced::Padding { top: 36.0, bottom: 12.0, ..iced::Padding::default() }),
-            container(row![
-                column![text("Tema").size(15), text("Warna tampilan aplikasi").size(12).color(mockup_style::muted(&theme))].spacing(4).width(Length::Fill),
-                selector,
-            ].spacing(20).align_y(iced::Alignment::Center).wrap())
-                .padding([18, 0]).width(Length::Fill).style(mockup_style::setting_row),
-            text("Tema diterapkan setelah berhasil disimpan.").size(12).color(mockup_style::muted(&theme)),
-        ].spacing(8).width(Length::Fill);
-        if self.settings_busy { content = content.push(text("Memproses Settings...").size(13)); }
-        if let Some(error) = &self.settings_error {
-            content = content.push(text(error).size(13));
-            if !self.settings_loaded && !self.settings_busy {
-                content = content.push(button("Coba muat ulang Settings").style(mockup_style::secondary).on_press(Message::LoadSettings));
-            }
+            column![
+                text("PREFERENSI").size(11).color(mockup_style::subtle(&theme)),
+                text("Pengaturan").size(32),
+                text("Atur tampilan NovelCraft sesuai kenyamananmu.").size(14).color(mockup_style::muted(&theme)),
+            ].spacing(6),
+            container(column![
+                text("TAMPILAN").size(11).color(mockup_style::subtle(&theme)),
+                row![
+                    column![
+                        text("Tema warna").size(16),
+                        text("Pilih palet warna untuk seluruh aplikasi.").size(13).color(mockup_style::muted(&theme)),
+                    ].spacing(5).width(Length::Fill),
+                    selector,
+                ].spacing(24).align_y(iced::Alignment::Center).wrap(),
+                text("Tema baru diterapkan setelah berhasil disimpan.").size(12).color(mockup_style::muted(&theme)),
+            ].spacing(16))
+                .width(Length::Fill)
+                .padding(22)
+                .style(mockup_style::card),
+        ].spacing(24).width(Length::Fill);
+
+        if self.settings_busy {
+            let status = if self.settings_loaded { "Menyimpan pengaturan…" } else { "Memuat pengaturan…" };
+            content = content.push(
+                container(text(status).size(13).color(mockup_style::muted(&theme)))
+                    .width(Length::Fill).padding([12, 16]).style(mockup_style::card),
+            );
         }
-        scrollable(container(container(content).max_width(640).width(Length::Fill))
-            .width(Length::Fill).center_x(Length::Fill).padding([32, 16]))
-            .height(Length::Fill).into()
+        if let Some(error) = &self.settings_error {
+            let title = if self.settings_loaded { "Pengaturan gagal disimpan" } else { "Pengaturan gagal dimuat" };
+            let mut notice = column![
+                text(title).size(14).color(theme.palette().danger),
+                text(error).size(13).color(mockup_style::muted(&theme)),
+            ].spacing(6);
+            if !self.settings_loaded && !self.settings_busy {
+                notice = notice.push(button("Muat ulang pengaturan").style(mockup_style::secondary).on_press(Message::LoadSettings));
+            }
+            content = content.push(container(notice).width(Length::Fill).padding(16).style(mockup_style::card));
+        }
+
+        scrollable(
+            container(container(content).max_width(760).width(Length::Fill))
+                .width(Length::Fill).center_x(Length::Fill).padding([36, 24]),
+        )
+        .height(Length::Fill)
+        .into()
     }
 
     fn reader_font_status(&self) -> &'static str {
-        if self.settings_busy { "Memproses Settings..." }
-        else if self.settings_error.is_some() && !self.settings_loaded { "Settings gagal dimuat; perbaiki dan muat ulang di Settings." }
-        else if self.settings_error.is_some() { "Settings gagal disimpan; coba lagi atau lihat Settings." }
-        else if !self.settings_loaded { "Settings belum dimuat." }
-        else { "Ukuran font disimpan secara lokal." }
+        if self.settings_busy { "Memproses pengaturan…" }
+        else if self.settings_error.is_some() && !self.settings_loaded { "Pengaturan gagal dimuat; coba muat ulang di Pengaturan." }
+        else if self.settings_error.is_some() { "Pengaturan gagal disimpan; coba lagi atau buka Pengaturan." }
+        else if !self.settings_loaded { "Pengaturan belum dimuat." }
+        else { "Ukuran huruf disimpan secara lokal." }
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -636,7 +662,7 @@ impl NovelCraft {
                 }
             }
             if is_workspace {
-                navigation = navigation.push(container(text(if self.page == Page::Writer { "WRITER" } else { "READER" }).size(10).color(mockup_style::subtle(&theme)))
+                navigation = navigation.push(container(text(if self.page == Page::Writer { "PENULIS" } else { "PEMBACA" }).size(10).color(mockup_style::subtle(&theme)))
                     .padding(iced::Padding { top: 20.0, bottom: 6.0, ..iced::Padding::default() }));
                 let tools: Element<'_, Message> = if self.page == Page::Writer {
                     self.writer.tools_view(&theme).map(Message::Writer)

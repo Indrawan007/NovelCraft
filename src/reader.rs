@@ -26,6 +26,8 @@ pub struct Reader {
     is_epub: bool,
     is_markdown: bool,
     markdown_items: Vec<markdown::Item>,
+    markdown_revision: u64,
+    markdown_ready: bool,
     show_source: bool,
     link_notice: Option<String>,
     font_size: u16,
@@ -62,6 +64,8 @@ impl Default for Reader {
             is_epub: false,
             is_markdown: false,
             markdown_items: Vec::new(),
+            markdown_revision: 0,
+            markdown_ready: false,
             show_source: false,
             link_notice: None,
             font_size: DEFAULT_READER_FONT_SIZE,
@@ -94,6 +98,7 @@ pub enum Message {
     Open,
     Opened(Result<Option<(PathBuf, Document)>, String>),
     OpenedWithBookmark(Result<(PathBuf, Document, Result<Option<Bookmark>, String>), String>),
+    MarkdownParsed(u64, Result<Vec<markdown::Item>, String>),
     PreviousSection,
     NextSection,
     ToggleToc,
@@ -195,8 +200,6 @@ impl Reader {
         self.busy = true;
         self.error = None;
         self.bookmark_notice = None;
-        self.pending_scroll = None;
-        self.invalidate_scroll_position();
         Some(Task::perform(
             async move {
                 let document = read_document(&path).await?;
@@ -213,8 +216,6 @@ impl Reader {
         self.busy = true;
         self.error = None;
         self.bookmark_notice = None;
-        self.pending_scroll = None;
-        self.invalidate_scroll_position();
         Some(Task::perform(
             async move {
                 let document = read_document(&path).await?;
@@ -227,16 +228,14 @@ impl Reader {
 
     fn set_document(&mut self, path: PathBuf, document: Document) {
         self.is_markdown = !document.is_epub && is_markdown_path(&path);
-        self.markdown_items = if self.is_markdown {
-            markdown::parse(document.sections.first().map(String::as_str).unwrap_or(""))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        self.markdown_items.clear();
+        self.markdown_revision = self.markdown_revision.wrapping_add(1);
+        self.markdown_ready = false;
         self.show_source = false;
         self.link_notice = None;
         self.path = Some(path);
         self.pending_scroll = None;
+        self.invalidate_scroll_position();
         self.sections = document.sections;
         self.toc = document.toc;
         self.show_toc = false;
@@ -253,6 +252,23 @@ impl Reader {
         self.error = None;
     }
 
+    fn parse_markdown_in_background(&mut self) -> Task<Message> {
+        if !self.is_markdown {
+            return Task::none();
+        }
+        let source = self.sections.first().cloned().unwrap_or_default();
+        let revision = self.markdown_revision;
+        self.busy = true;
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || markdown::parse(&source).collect::<Vec<_>>())
+                    .await
+                    .map_err(|error| format!("Gagal menyiapkan tampilan Markdown: {error}"))
+            },
+            move |result| Message::MarkdownParsed(revision, result),
+        )
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::ToggleTools if !self.controls_blocked() => {
@@ -266,17 +282,14 @@ impl Reader {
                 self.busy = true;
                 self.error = None;
                 self.bookmark_notice = None;
-                self.pending_scroll = None;
-                self.invalidate_scroll_position();
                 return Task::perform(open_file(), Message::Opened);
             }
             Message::Opened(result) => {
                 self.busy = false;
-                self.invalidate_scroll_position();
                 match result {
                     Ok(Some((path, document))) => {
                         self.set_document(path, document);
-                        return reset_scroll();
+                        return Task::batch([reset_scroll(), self.parse_markdown_in_background()]);
                     }
                     Ok(None) => {}
                     Err(error) => self.error = Some(error),
@@ -284,7 +297,6 @@ impl Reader {
             }
             Message::OpenedWithBookmark(result) => {
                 self.busy = false;
-                self.invalidate_scroll_position();
                 match result {
                     Ok((path, document, bookmark)) => {
                         self.set_document(path, document);
@@ -294,6 +306,17 @@ impl Reader {
                         if self.pending_scroll.is_none() {
                             self.pending_scroll = Some(0);
                         }
+                        return self.parse_markdown_in_background();
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            Message::MarkdownParsed(revision, result) if revision == self.markdown_revision => {
+                self.busy = false;
+                match result {
+                    Ok(items) => {
+                        self.markdown_items = items;
+                        self.markdown_ready = true;
                     }
                     Err(error) => self.error = Some(error),
                 }
@@ -482,14 +505,23 @@ impl Reader {
             view = view.push(text("Hapus penanda tersimpan untuk file ini? File buku tidak akan dihapus."));
             view = view.push(row![button("Hapus penanda").on_press(Message::ConfirmRemoveBookmark), button("Batal").on_press(Message::CancelRemoveBookmark)].spacing(12));
         }
-        if self.busy { view = view.push(text("Memproses file atau penanda...")); }
+        if self.busy {
+            view = view.push(text(if self.is_markdown && !self.markdown_ready {
+                "Menyiapkan tampilan Markdown…"
+            } else {
+                "Memproses file atau penanda…"
+            }));
+        }
         if let Some(error) = &self.error { view = view.push(text(error)); }
         if let Some(notice) = &self.bookmark_notice { view = view.push(text(notice).size(14)); }
         if let Some(notice) = &self.link_notice { view = view.push(text(notice).size(14)); }
         if !font_settings_ready { view = view.push(text(font_status).size(12)); }
 
         let contents = self.sections.get(self.section).map(String::as_str).unwrap_or("");
-        let content: Element<'_, Message> = if self.is_markdown && !self.show_source {
+        let content: Element<'_, Message> = if self.is_markdown && !self.show_source && self.busy && !self.markdown_ready {
+            container(text("Menyiapkan tampilan Markdown…").size(14).color(crate::mockup_style::muted(theme)))
+                .width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into()
+        } else if self.is_markdown && !self.show_source && self.markdown_ready {
             markdown::view(
                 &self.markdown_items,
                 markdown::Settings::with_text_size(self.font_size),
@@ -767,6 +799,13 @@ async fn read_text(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn finish_markdown_parse(reader: &mut Reader) {
+        let revision = reader.markdown_revision;
+        let source = reader.sections.first().map(String::as_str).unwrap_or("");
+        let items = markdown::parse(source).collect();
+        let _ = reader.update(Message::MarkdownParsed(revision, Ok(items)));
+    }
 
     #[tokio::test]
     async fn startup_open_uses_reader_without_restoring_bookmark() {
@@ -1060,6 +1099,7 @@ mod tests {
         let path = PathBuf::from("book.md");
         let doc = Document { sections: vec!["# Judul".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((path.clone(), doc)))));
+        finish_markdown_parse(&mut reader);
         let bookmark = Bookmark { path, section: 0, section_count: None, scroll_percent: None, markdown_source: true };
         let _ = reader.update(Message::BookmarkLoaded(Ok(Some(bookmark))));
         assert!(reader.show_source);
@@ -1155,26 +1195,37 @@ mod tests {
     }
 
     #[test]
-    fn cancel_and_error_preserve_previous_document() {
+    fn cancel_and_error_preserve_previous_document_and_scroll_position() {
         let path = PathBuf::from("old.txt");
         let mut reader = Reader {
             path: Some(path.clone()),
             sections: vec!["Teks lama".into()],
-            busy: true,
+            scroll_percent: Some(42),
             ..Reader::default()
         };
+        let _ = reader.open_path(PathBuf::from("cancel.txt"));
+        assert_eq!(reader.scroll_percent, Some(42));
         let _ = reader.update(Message::Opened(Ok(None)));
         assert!(!reader.busy);
+        assert_eq!(reader.scroll_percent, Some(42));
+        let _ = reader.open_path(PathBuf::from("broken.txt"));
         let _ = reader.update(Message::Opened(Err("gagal".into())));
         assert_eq!(reader.path, Some(path));
         assert_eq!(reader.sections[0], "Teks lama");
+        assert_eq!(reader.scroll_percent, Some(42));
         assert_eq!(reader.error.as_deref(), Some("gagal"));
+
+        let document = Document { sections: vec!["Teks baru".into()], is_epub: false, toc: Vec::new() };
+        let _ = reader.open_path(PathBuf::from("new.txt"));
+        let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("new.txt"), document)))));
+        assert_eq!(reader.scroll_percent, None);
+        assert_eq!(reader.path.as_deref(), Some(Path::new("new.txt")));
     }
 
     #[test]
     fn opening_document_replaces_contents() {
         let mut reader = Reader::default();
-        let path = PathBuf::from("novel.md");
+        let path = PathBuf::from("novel.txt");
         let document = Document { sections: vec!["Isi novel".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((path.clone(), document)))));
         assert_eq!(reader.path, Some(path));
@@ -1336,6 +1387,7 @@ mod tests {
         let mut reader = Reader::default();
         let doc = Document { sections: vec!["# Bulan\nSatu\nbulan dua".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some(("book.md".into(), doc)))));
+        finish_markdown_parse(&mut reader);
         assert!(!reader.show_text_search);
         let _ = reader.update(Message::SearchInputChanged("bulan".into()));
         assert!(reader.search_input.is_empty());
@@ -1636,6 +1688,9 @@ mod tests {
         };
         let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("novel.MD"), document)))));
         assert!(reader.is_markdown);
+        assert!(reader.busy);
+        finish_markdown_parse(&mut reader);
+        assert!(!reader.busy);
         assert!(matches!(reader.markdown_items.first(), Some(markdown::Item::Heading(..))));
         assert!(reader.markdown_items.iter().any(|item| matches!(item, markdown::Item::List { .. })));
         for theme in [Theme::TokyoNight, Theme::Dark, Theme::Nord, Theme::Dracula] {
@@ -1653,6 +1708,7 @@ mod tests {
         let mut reader = Reader::default();
         let doc = Document { sections: vec!["# Judul".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("book.markdown"), doc)))));
+        finish_markdown_parse(&mut reader);
         let _ = reader.update(Message::ToggleSource);
         let doc = Document { sections: vec!["# teks biasa".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("book.txt"), doc)))));

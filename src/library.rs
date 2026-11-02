@@ -289,9 +289,9 @@ impl Library {
     }
 
     pub fn view<'a>(&'a self, theme: &Theme) -> Element<'a, Message> {
-        let mut import = button(text("Import").size(13)).padding([9, 16]).style(crate::mockup_style::secondary);
+        let mut import = button(text("Tambah buku").size(13)).padding([9, 16]).style(crate::mockup_style::secondary);
         let mut new_draft = button(text("Draft baru").size(13)).padding([9, 16]).style(crate::mockup_style::primary);
-        let mut reload = button(text("Muat ulang Library").size(12)).style(button::secondary);
+        let mut reload = button(text("Muat ulang").size(12)).style(crate::mockup_style::secondary);
         if !self.controls_blocked() {
             new_draft = new_draft.on_press(Message::NewDraft);
         }
@@ -301,20 +301,26 @@ impl Library {
         }
         let mut search = text_input("Cari nama file...", &self.query).size(13).padding([9, 14]).width(Length::Fill).style(crate::mockup_style::search);
         if !self.controls_blocked() { search = search.on_input(Message::Search); }
+        let header_controls: Element<'a, Message> = if self.loaded && self.books.is_empty() {
+            Space::new(0, 0).into()
+        } else {
+            let search = container(search).width(Length::Fill).max_width(360);
+            row![search, import, new_draft].align_y(iced::Alignment::Center).spacing(10).wrap().into()
+        };
         let mut view = column![
-            text("Library").size(32),
-            text(if self.loaded { format!("{} file · tersimpan di lokasi aslinya", self.books.len()) } else { "Memuat Library lokal".to_owned() })
+            text("Koleksi buku").size(32),
+            text(if self.loaded { format!("{} buku · file tetap tersimpan di lokasi aslinya", self.books.len()) } else { "Memuat koleksi lokal…".to_owned() })
                 .size(14).color(crate::mockup_style::muted(theme)),
-            row![container(search).width(Length::Fill).max_width(360), import, new_draft].align_y(iced::Alignment::Center).spacing(10),
+            header_controls,
         ]
         .spacing(12)
         .height(Length::Fill);
 
         let mut tools = Row::new().spacing(10).push(reload);
         if self.loaded && !self.books.is_empty() {
-            let mut sort = button(text(self.sort.label()).size(12)).style(button::secondary);
-            let mut filter = button(text(if self.missing_only { "Tampilkan semua lokasi" } else { "Hanya tidak ditemukan" }).size(12)).style(button::secondary);
-            let mut refresh = button(text("Periksa ulang lokasi").size(12)).style(button::secondary);
+            let mut sort = button(text(self.sort.label()).size(12)).style(crate::mockup_style::secondary);
+            let mut filter = button(text(if self.missing_only { "Tampilkan semua lokasi" } else { "Hanya file hilang" }).size(12)).style(crate::mockup_style::secondary);
+            let mut refresh = button(text("Periksa lokasi").size(12)).style(crate::mockup_style::secondary);
             if !self.controls_blocked() {
                 sort = sort.on_press(Message::CycleSort);
                 filter = filter.on_press(Message::ToggleMissingOnly);
@@ -363,9 +369,25 @@ impl Library {
             view = view.push(text("Memuat penanda baca...").size(14));
         }
         if !self.loaded && !self.busy {
-            view = view.push(button("Coba muat ulang").on_press(Message::Load));
-        } else if self.loaded && self.books.is_empty() {
-            view = view.push(text("Library masih kosong. Tambahkan file EPUB, TXT, atau Markdown."));
+            view = view.push(button("Coba muat ulang").style(crate::mockup_style::secondary).on_press(Message::Load));
+        }
+        if self.loaded && self.books.is_empty() {
+            let mut add_book = button("Tambah buku").style(crate::mockup_style::secondary);
+            let mut start_writing = button("Mulai menulis").style(crate::mockup_style::primary);
+            if !self.controls_blocked() {
+                add_book = add_book.on_press(Message::Import);
+                start_writing = start_writing.on_press(Message::NewDraft);
+            }
+            let empty_state = container(column![
+                text("Mulai perpustakaanmu").size(22),
+                text("Tambahkan EPUB, TXT, atau Markdown untuk membaca, atau buka draft baru untuk mulai menulis.")
+                    .size(14).color(crate::mockup_style::muted(theme)),
+                row![add_book, start_writing].spacing(10).wrap(),
+            ].spacing(14))
+                .width(Length::Fill)
+                .padding(28)
+                .style(crate::mockup_style::card);
+            return view.push(empty_state).into();
         }
 
         let mut list = Row::new().spacing(16).width(Length::Fill);
@@ -375,16 +397,16 @@ impl Library {
         let bookmarks_by_path = self.bookmarks.as_ref().map(|items| bookmark_index(items));
         for path in visible {
             let name = book_name(path);
-            let mut open = button(text("Baca").size(12)).style(button::secondary);
-            let mut remove = button(text("Hapus dari daftar").size(12)).style(button::secondary);
-            let mut relink = button(text("Ubah lokasi").size(12)).style(button::secondary);
+            let mut open = button(text("Baca").size(12)).style(crate::mockup_style::primary);
+            let mut remove = button(text("Hapus dari daftar").size(12)).style(crate::mockup_style::secondary);
+            let mut relink = button(text("Ubah lokasi").size(12)).style(crate::mockup_style::secondary);
             if self.loaded && !self.controls_blocked() {
                 open = open.on_press(Message::Open(path.clone()));
                 remove = remove.on_press(Message::Remove(path.clone()));
                 relink = relink.on_press(Message::Relink(path.clone()));
             }
             let mut card = column![
-                text(name.to_string()).size(16),
+                text(name.to_string()).size(17),
                 text(path.display().to_string()).size(12).color(crate::mockup_style::muted(theme)),
                 text(availability_label(self.availability.get(path), self.availability_active.is_some())).size(12).color(crate::mockup_style::subtle(theme)),
             ]

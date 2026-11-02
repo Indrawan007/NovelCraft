@@ -4,9 +4,10 @@ mod library;
 mod reader;
 mod settings;
 mod shortcuts;
+mod ui;
 mod writer;
 
-use iced::widget::{button, column, container, row, text, Column};
+use iced::widget::{button, column, container, horizontal_space, row, text, vertical_space, Column};
 use iced::{event, keyboard, window, Element, Length, Subscription, Task, Theme};
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -110,6 +111,7 @@ impl Page {
 #[serde(rename_all = "snake_case")]
 enum ThemeChoice {
     #[default]
+    NovelCraft,
     TokyoNight,
     Dark,
     Nord,
@@ -117,10 +119,11 @@ enum ThemeChoice {
 }
 
 impl ThemeChoice {
-    const ALL: [Self; 4] = [Self::TokyoNight, Self::Dark, Self::Nord, Self::Dracula];
+    const ALL: [Self; 5] = [Self::NovelCraft, Self::TokyoNight, Self::Dark, Self::Nord, Self::Dracula];
 
     fn label(self) -> &'static str {
         match self {
+            Self::NovelCraft => "NovelCraft (mockup)",
             Self::TokyoNight => "Tokyo Night",
             Self::Dark => "Dark",
             Self::Nord => "Nord",
@@ -130,6 +133,7 @@ impl ThemeChoice {
 
     fn iced_theme(self) -> Theme {
         match self {
+            Self::NovelCraft => ui::mockup_theme(),
             Self::TokyoNight => Theme::TokyoNight,
             Self::Dark => Theme::Dark,
             Self::Nord => Theme::Nord,
@@ -400,6 +404,13 @@ impl NovelCraft {
                 };
                 Task::batch([task, restore, refresh])
             }
+            Message::Library(library::Message::NewDraft) if self.page == Page::Library && self.pending_close.is_none() && self.library.can_open_book() => {
+                let task = self.writer.update(writer::Message::NewDraft).map(Message::Writer);
+                self.page = Page::Writer;
+                self.focus_mode = false;
+                task
+            }
+            Message::Library(library::Message::NewDraft) => Task::none(),
             Message::Library(library::Message::Open(path)) => self.open_library_book(path, false),
             Message::Library(library::Message::Continue(path)) => self.open_library_book(path, true),
             Message::Library(message) => self.library.update(message).map(Message::Library),
@@ -483,32 +494,48 @@ impl NovelCraft {
             return self.close_confirmation();
         }
 
-        let mut navigation = Column::new().spacing(8);
+        let theme = self.theme_choice.iced_theme();
+        let mut navigation = Column::new().spacing(4);
         if !self.focus_mode {
-            navigation = navigation.push(text("NAVIGATE").size(12));
+            navigation = navigation.push(text("NAVIGATE").size(10).color(ui::subtle(&theme)));
             for page in Page::ALL {
-                let label = if self.page == page {
-                    format!("›  {}  {}", page.title(), page.shortcut_hint())
-                } else {
-                    format!("   {}  {}", page.title(), page.shortcut_hint())
-                };
+                if page == Page::Settings {
+                    navigation = navigation.push(container(text("CONFIG").size(10).color(ui::subtle(&theme))).padding(iced::Padding { top: 16.0, bottom: 4.0, ..iced::Padding::default() }));
+                }
+                let selected = self.page == page;
+                let marker = if selected { "▏" } else { "  " };
+                let nav_label = row![
+                    text(marker).color(theme.palette().primary),
+                    text(page.title()).size(13),
+                    horizontal_space(),
+                    text(page.shortcut_hint()).size(10).color(ui::subtle(&theme)),
+                ].align_y(iced::Alignment::Center).spacing(6);
                 navigation = navigation.push(
-                    button(text(label))
-                        .width(Length::Fill)
+                    button(nav_label).width(Length::Fill).padding([9, 8])
+                        .style(move |theme, status| ui::navigation(theme, status, selected))
                         .on_press(Message::Navigate(page)),
                 );
             }
+            let draft = self.writer.draft_stats_label();
+            navigation = navigation.push(vertical_space()).push(
+                container(column![
+                    text("DRAFT SAAT INI").size(10).color(ui::subtle(&theme)),
+                    text(draft).size(18).color(theme.palette().primary),
+                    text("Target per draft · sesi ini").size(11).color(ui::muted(&theme)),
+                ].spacing(5)).width(Length::Fill).padding(12).style(ui::card),
+            );
+            navigation = navigation.push(text("v0.1.0 · lokal").size(10).color(ui::subtle(&theme)));
         }
 
-        // Keep the sidebar's place in the widget tree so the editor state is not replaced.
+        // Preserve the sidebar's place in the widget tree for editor state.
         let sidebar = container(navigation)
             .width(if self.focus_mode { 0_u16 } else { 200_u16 })
             .height(Length::Fill)
-            .padding(if self.focus_mode { 0_u16 } else { 20_u16 });
+            .padding(if self.focus_mode { 0_u16 } else { 12_u16 })
+            .style(ui::chrome);
 
-        let theme = self.theme_choice.iced_theme();
         let page: Element<'_, Message> = if self.page == Page::Library {
-            self.library.view().map(Message::Library)
+            self.library.view(&theme).map(Message::Library)
         } else if self.page == Page::Writer {
             self.writer.view(&theme).map(Message::Writer)
         } else if self.page == Page::Reader {
@@ -531,23 +558,32 @@ impl NovelCraft {
         let content = container(page)
             .width(Length::Fill)
             .height(Length::Fill)
-            .padding(32);
+            .padding(if self.page == Page::Library { [40, 48] } else { [24, 32] });
 
-        let mut fullscreen = button("Fullscreen (F11)");
+        let mut fullscreen = button(text("Fullscreen (F11)").size(12)).style(button::secondary);
         if !self.fullscreen_pending {
             fullscreen = fullscreen.on_press(Message::ToggleFullscreen);
         }
-        let mut topbar_content = row![text("novelcraft").size(18), fullscreen].spacing(16);
+        let mut topbar_content = row![
+            text("●").size(12).color(theme.palette().primary),
+            text("novelcraft").size(14).font(iced::Font::MONOSPACE),
+            text("│").size(14).color(ui::subtle(&theme)),
+            text(format!("~ / {}", self.page.title().to_lowercase())).size(12).color(ui::muted(&theme)),
+            horizontal_space(),
+            fullscreen,
+        ].align_y(iced::Alignment::Center).spacing(10);
         if matches!(self.page, Page::Reader | Page::Writer) {
             let label = if self.focus_mode { "Keluar mode fokus" } else { "Mode fokus" };
-            topbar_content = topbar_content.push(button(label).on_press(Message::ToggleFocusMode));
+            topbar_content = topbar_content.push(button(text(label).size(12)).style(button::secondary).on_press(Message::ToggleFocusMode));
         }
         if let Some(notice) = &self.fullscreen_notice {
             topbar_content = topbar_content.push(text(notice).size(12));
         }
         let topbar = container(topbar_content)
             .width(Length::Fill)
-            .padding([12, 20]);
+            .padding([0, 20])
+            .center_y(48)
+            .style(ui::chrome);
 
         column![topbar, row![sidebar, content].height(Length::Fill)]
             .height(Length::Fill)
@@ -748,8 +784,30 @@ mod tests {
     }
 
     #[test]
-    fn application_defaults_to_tokyo_night() {
-        assert_eq!(NovelCraft::default().theme_choice.iced_theme(), Theme::TokyoNight);
+    fn library_new_draft_respects_writer_and_close_guards() {
+        let mut app = NovelCraft::default();
+        make_draft_dirty(&mut app);
+        let id = window::Id::unique();
+        let _ = app.update(Message::CloseRequested(id));
+        let _ = app.update(Message::Library(library::Message::NewDraft));
+        assert_eq!(app.page, Page::Library);
+        assert!(app.writer.has_unsaved_changes());
+        let _ = app.update(Message::CancelClose);
+        let _ = app.update(Message::Library(library::Message::NewDraft));
+        assert_eq!(app.page, Page::Writer);
+        assert!(app.writer.has_unsaved_changes());
+        let _ = app.update(Message::Writer(writer::Message::CancelDiscard));
+        assert!(app.writer.has_unsaved_changes());
+        let _ = app.update(Message::Navigate(Page::Library));
+        let _ = app.update(Message::Library(library::Message::NewDraft));
+        let _ = app.update(Message::Writer(writer::Message::ConfirmDiscard));
+        assert!(!app.writer.has_unsaved_changes());
+    }
+
+    #[test]
+    fn application_defaults_to_mockup_theme() {
+        assert_eq!(NovelCraft::default().theme_choice, ThemeChoice::NovelCraft);
+        assert_eq!(NovelCraft::default().theme_choice.iced_theme().palette(), ui::mockup_theme().palette());
     }
 
     #[test]
@@ -826,7 +884,7 @@ mod tests {
         let id = window::Id::unique();
         let _ = app.update(Message::CloseRequested(id));
         let _ = app.update(Message::SelectTheme(ThemeChoice::Dark));
-        assert_eq!(app.theme_choice, ThemeChoice::TokyoNight);
+        assert_eq!(app.theme_choice, ThemeChoice::NovelCraft);
         assert_eq!(app.pending_close, Some(id));
     }
 

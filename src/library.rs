@@ -1,6 +1,6 @@
 use crate::bookmarks::{self, Bookmark};
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Column};
-use iced::{Element, Length, Task};
+use iced::widget::{button, column, container, progress_bar, row, scrollable, text, text_input, Row, Space};
+use iced::{Element, Length, Task, Theme};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -74,6 +74,7 @@ pub enum Message {
     CycleSort,
     ToggleMissingOnly,
     Import,
+    NewDraft,
     Imported(Result<Option<PathBuf>, String>),
     Remove(PathBuf),
     ConfirmRemove,
@@ -286,9 +287,13 @@ impl Library {
         self.error = Some(error.to_owned());
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
-        let mut import = button("Tambah file");
-        let mut reload = button("Muat ulang Library");
+    pub fn view<'a>(&'a self, theme: &Theme) -> Element<'a, Message> {
+        let mut import = button(text("Import").size(13)).style(button::secondary);
+        let mut new_draft = button(text("Draft baru").size(13)).style(button::primary);
+        let mut reload = button(text("Muat ulang Library").size(12)).style(button::secondary);
+        if !self.controls_blocked() {
+            new_draft = new_draft.on_press(Message::NewDraft);
+        }
         if self.loaded && !self.controls_blocked() {
             import = import.on_press(Message::Import);
             reload = reload.on_press(Message::Reload);
@@ -297,20 +302,18 @@ impl Library {
         if !self.controls_blocked() { search = search.on_input(Message::Search); }
         let mut view = column![
             text("Library").size(32),
-            text("File tetap berada di lokasi aslinya; Library hanya menyimpan daftar lokasi.").size(14),
-            row![
-                search,
-                import,
-                reload,
-            ].spacing(12),
+            text(if self.loaded { format!("{} file · tersimpan di lokasi aslinya", self.books.len()) } else { "Memuat Library lokal".to_owned() })
+                .size(14).color(crate::ui::muted(theme)),
+            row![search, import, new_draft].spacing(10),
         ]
         .spacing(12)
         .height(Length::Fill);
 
+        let mut tools = Row::new().spacing(10).push(reload);
         if self.loaded && !self.books.is_empty() {
-            let mut sort = button(self.sort.label());
-            let mut filter = button(if self.missing_only { "Tampilkan semua lokasi" } else { "Hanya tidak ditemukan" });
-            let mut refresh = button("Periksa ulang lokasi");
+            let mut sort = button(text(self.sort.label()).size(12)).style(button::secondary);
+            let mut filter = button(text(if self.missing_only { "Tampilkan semua lokasi" } else { "Hanya tidak ditemukan" }).size(12)).style(button::secondary);
+            let mut refresh = button(text("Periksa ulang lokasi").size(12)).style(button::secondary);
             if !self.controls_blocked() {
                 sort = sort.on_press(Message::CycleSort);
                 filter = filter.on_press(Message::ToggleMissingOnly);
@@ -318,11 +321,12 @@ impl Library {
                     refresh = refresh.on_press(Message::RefreshAvailability);
                 }
             }
-            view = view.push(row![sort, filter, refresh].spacing(12));
+            tools = tools.push(sort).push(filter).push(refresh);
             if self.missing_only {
                 view = view.push(text("Filter berdasarkan pemeriksaan terakhir; lokasi yang belum dapat diperiksa tidak ditampilkan.").size(12));
             }
         }
+        view = view.push(tools.padding(iced::Padding { bottom: 10.0, ..iced::Padding::default() }).wrap());
         if let Some(path) = &self.pending_remove {
             let count = self.books.iter().filter(|book| *book == path).count();
             view = view.push(text("Hapus entri ini dari Library? File buku dan penanda tidak dihapus."));
@@ -363,23 +367,23 @@ impl Library {
             view = view.push(text("Library masih kosong. Tambahkan file EPUB, TXT, atau Markdown."));
         }
 
-        let mut list = Column::new().spacing(10).width(Length::Fill);
+        let mut list = Row::new().spacing(16).width(Length::Fill);
         let visible = self.visible_books();
         let matches = visible.len();
         for path in visible {
             let name = book_name(path);
-            let mut open = button("Baca");
-            let mut remove = button("Hapus dari daftar");
-            let mut relink = button("Ubah lokasi");
+            let mut open = button(text("Baca").size(12)).style(button::secondary);
+            let mut remove = button(text("Hapus dari daftar").size(12)).style(button::secondary);
+            let mut relink = button(text("Ubah lokasi").size(12)).style(button::secondary);
             if self.loaded && !self.controls_blocked() {
                 open = open.on_press(Message::Open(path.clone()));
                 remove = remove.on_press(Message::Remove(path.clone()));
                 relink = relink.on_press(Message::Relink(path.clone()));
             }
             let mut card = column![
-                text(name.to_string()).size(18),
-                text(path.display().to_string()).size(12),
-                text(availability_label(self.availability.get(path), self.availability_active.is_some())).size(14),
+                text(name.to_string()).size(16),
+                text(path.display().to_string()).size(12).color(crate::ui::muted(theme)),
+                text(availability_label(self.availability.get(path), self.availability_active.is_some())).size(12).color(crate::ui::subtle(theme)),
             ]
             .width(Length::Fill)
             .spacing(8);
@@ -388,7 +392,7 @@ impl Library {
                 let bookmark = bookmarks.iter().find(|item| item.path == *path);
                 card = card.push(text(bookmark_label(path, bookmark)).size(14));
                 if let Some(bookmark) = bookmark {
-                    let mut continue_reading = button("Lanjut baca");
+                    let mut continue_reading = button(text("Lanjut baca").size(12)).style(button::secondary);
                     if self.loaded && !self.controls_blocked() {
                         continue_reading = continue_reading.on_press(Message::Continue(path.clone()));
                     }
@@ -397,15 +401,24 @@ impl Library {
                         Some(percent) => format!("Perkiraan posisi keseluruhan: {percent}%"),
                         None => "Perkiraan posisi keseluruhan tidak tersedia".to_owned(),
                     };
-                    card = card.push(text(estimate).size(14));
+                    card = card.push(text(estimate).size(12).color(crate::ui::muted(theme)));
+                    if let Some(percent) = estimated_position(path, bookmark) {
+                        card = card.push(progress_bar(0.0..=100.0, f32::from(percent)).height(3));
+                    }
                 }
             }
-            card = card.push(actions.push(remove)).push(relink);
+            card = card.push(actions.push(remove).push(relink).padding(iced::Padding { bottom: 10.0, ..iced::Padding::default() }).wrap());
+            let spine = if self.availability.get(path) == Some(&Availability::Missing) {
+                theme.palette().danger
+            } else {
+                theme.palette().primary
+            };
+            let spine = container(Space::new(4, 120)).style(move |_| container::Style::default().background(spine));
             list = list.push(
-                container(card)
-                    .width(Length::Fill)
-                    .padding(16)
-                    .style(container::rounded_box),
+                container(row![spine, card].spacing(14))
+                    .width(320)
+                    .padding(20)
+                    .style(crate::ui::card),
             );
         }
         if self.loaded && !self.books.is_empty() && matches == 0 {
@@ -418,7 +431,7 @@ impl Library {
             };
             view = view.push(text(notice));
         }
-        view.push(scrollable(list).height(Length::Fill)).into()
+        view.push(scrollable(list.padding(iced::Padding { bottom: 16.0, ..iced::Padding::default() }).wrap()).height(Length::Fill)).into()
     }
 }
 
@@ -704,7 +717,7 @@ mod tests {
         let _ = library.update(Message::AvailabilityLoaded(latest, HashMap::from([(new.clone(), Availability::File)])));
         assert!(library.availability_active.is_none());
         assert_eq!(library.availability.get(&new), Some(&Availability::File));
-        drop(library.view());
+        drop(library.view(&Theme::TokyoNight));
         let _ = library.update(Message::RefreshAvailability);
         assert!(library.availability.is_empty());
         assert!(library.availability_active.is_some());
@@ -749,7 +762,7 @@ mod tests {
         assert_eq!(library.books, original);
         assert_eq!(library.snapshot.as_deref(), Some(b"initial".as_slice()));
         assert!(!library.busy);
-        drop(library.view());
+        drop(library.view(&Theme::TokyoNight));
     }
 
     #[test]
@@ -772,7 +785,7 @@ mod tests {
         let _ = library.update(Message::RefreshAvailability);
         assert!(library.visible_books().is_empty());
         assert!(library.availability_active.is_some());
-        drop(library.view());
+        drop(library.view(&Theme::TokyoNight));
         let revision = library.availability_active.unwrap();
         let _ = library.update(Message::AvailabilityLoaded(revision, HashMap::from([(a.clone(), Availability::Missing), (c, Availability::File)])));
         assert!(library.visible_books().is_empty());
@@ -915,14 +928,14 @@ mod tests {
             ..Library::default()
         };
         let _ = library.update(Message::Search("novel".into()));
-        drop(library.view());
+        drop(library.view(&Theme::TokyoNight));
         library.bookmarks = Some(vec![Bookmark {
             path: "/books/Novel.epub".into(), section: 0, section_count: Some(1),
             scroll_percent: Some(20), markdown_source: false,
         }]);
-        drop(library.view());
+        drop(library.view(&Theme::TokyoNight));
         library.busy = true;
-        drop(library.view());
+        drop(library.view(&Theme::TokyoNight));
         assert_eq!(library.books.len(), 2);
         assert_eq!(library.query, "novel");
     }
@@ -962,7 +975,7 @@ mod tests {
         assert_eq!(library.pending_remove.as_ref(), Some(&path));
         assert!(!library.busy);
         assert!(!library.can_open_book());
-        drop(library.view());
+        drop(library.view(&Theme::TokyoNight));
         let _ = library.update(Message::Remove(other.clone()));
         let _ = library.update(Message::Relink(other.clone()));
         let _ = library.update(Message::Import);
@@ -1018,7 +1031,7 @@ mod tests {
         assert_eq!(library.pending_remove.as_ref(), Some(&path));
         assert_eq!(library.books.len(), 2);
         assert!(without_book(&library.books, &path).is_empty());
-        drop(library.view());
+        drop(library.view(&Theme::TokyoNight));
         let _ = library.update(Message::ConfirmRemove);
         assert!(library.busy);
         assert_eq!(library.books.len(), 2);
@@ -1085,7 +1098,7 @@ mod tests {
         assert_eq!(library.pending_relink, Some((old.clone(), new.clone())));
         assert!(!library.busy);
         assert!(!library.can_open_book());
-        drop(library.view());
+        drop(library.view(&Theme::TokyoNight));
         let _ = library.update(Message::Remove(old.clone()));
         let _ = library.update(Message::Reload);
         let _ = library.update(Message::Import);

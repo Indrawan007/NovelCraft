@@ -157,7 +157,7 @@ mod tests {
     #[tokio::test]
     async fn saves_and_reloads_theme_and_preserves_unknown_fields() {
         let path = temp_path();
-        assert_eq!(read_from(&path).await.unwrap().1.theme, ThemeChoice::TokyoNight);
+        assert_eq!(read_from(&path).await.unwrap().1.theme, ThemeChoice::NovelCraft);
         save_to(&path, SettingUpdate::Theme(ThemeChoice::Nord)).await.unwrap();
         assert_eq!(read_from(&path).await.unwrap().1.theme, ThemeChoice::Nord);
         tokio::fs::write(&path, br#"{"theme":"dark","future_setting":{"value":1}}"#).await.unwrap();
@@ -181,6 +181,17 @@ mod tests {
         assert_eq!(map.get("future_setting"), Some(&serde_json::json!(42)));
         save_to(&path, SettingUpdate::Theme(ThemeChoice::Dark)).await.unwrap();
         assert_eq!(read_from(&path).await.unwrap().1.reader_font_size, 24);
+        tokio::fs::remove_dir_all(path.parent().unwrap()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mockup_theme_round_trips_and_old_theme_is_preserved() {
+        let path = temp_path();
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&path, br#"{"theme":"tokyo_night"}"#).await.unwrap();
+        assert_eq!(read_from(&path).await.unwrap().1.theme, ThemeChoice::TokyoNight);
+        save_to(&path, SettingUpdate::Theme(ThemeChoice::NovelCraft)).await.unwrap();
+        assert_eq!(read_from(&path).await.unwrap().1.theme, ThemeChoice::NovelCraft);
         tokio::fs::remove_dir_all(path.parent().unwrap()).await.unwrap();
     }
 

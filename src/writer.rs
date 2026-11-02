@@ -68,6 +68,13 @@ impl Writer {
         self.busy
     }
 
+    pub(crate) fn draft_stats_label(&self) -> String {
+        match word_target(&self.target_input) {
+            Some(target) => format!("{} / {target} kata", self.word_count),
+            None => format!("{} kata", self.word_count),
+        }
+    }
+
     fn controls_blocked(&self) -> bool {
         self.busy || self.pending_discard.is_some() || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
     }

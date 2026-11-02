@@ -41,7 +41,7 @@ desktop modern berbasis Wayland.
 ## 🚧 Status Implementasi
 
 Proyek masih dalam tahap awal. Aplikasi Rust saat ini memiliki jendela Iced,
-tema gelap Tokyo Night bawaan Iced, dan navigasi antara Library, Reader, Writer, dan Settings. Writer
+tema gelap NovelCraft yang mengikuti palet mockup, dan navigasi antara Library, Reader, Writer, dan Settings. Writer
 menyediakan editor teks, hitungan kata, draft baru, syntax highlighting Markdown
 dasar, preview Markdown langsung, serta buka dan simpan file TXT/Markdown.
 Highlighting aktif untuk draft baru dan file `.md`/`.markdown` (termasuk huruf
@@ -110,11 +110,13 @@ karakter Unicode (bukan case folding atau normalisasi Unicode penuh), tidak
 mencocokkan lintas baris, dan tidak menggeser atau menyorot teks dokumen.
 Pencarian dapat lambat pada file besar; membuka/menutup panel dapat mengubah
 layout dan menghapus pengukuran posisi gulir sementara.
-Library menampilkan kartu satu kolom berisi nama dan lokasi file, menyediakan
+Library menampilkan kartu berbaris yang membungkus sesuai ruang berisi nama dan lokasi file, menyediakan
 pencarian nama file, menampilkan penanda manual yang tersimpan, dan dapat membuka
 file di Reader. Settings menyediakan pilihan tema gelap yang disimpan lokal;
 integrasi Hyprland belum dibuat.
-`mockup.html` adalah referensi desain, bukan aplikasi native yang fungsional.
+`mockup.html` adalah target desain visual. Shell dan Library mulai disesuaikan;
+Reader, Writer, dan Settings belum sepenuhnya mengikuti mockup. Data dan kontrol
+contoh di mockup tidak otomatis menjadi fitur aplikasi native.
 
 Writer meminta konfirmasi sebelum membuat draft baru, membuka file lain, atau
 menutup jendela jika draft memiliki perubahan yang belum disimpan. Saat operasi file Reader, Writer, Library, atau
@@ -227,7 +229,7 @@ Daftar di bawah ini adalah **target MVP**, bukan fitur yang sudah selesai.
 - [x] Mode fokus Reader (sembunyikan sidebar; tanpa fullscreen)
 - [x] Scroll reading dan indikator posisi gulir per dokumen/bagian
 - [x] Simpan, pulihkan, dan hapus satu penanda posisi manual per file antar-sesi
-- [x] Dark theme (Tokyo Night)
+- [x] Tema gelap NovelCraft dan tema bawaan Iced
 
 ### ✍️ Mode Tulis (Writer)
 - [x] Draft baru dengan konfirmasi untuk perubahan yang belum disimpan
@@ -242,20 +244,21 @@ Daftar di bawah ini adalah **target MVP**, bukan fitur yang sudah selesai.
 - [x] Tampilkan penanda baca manual per file pada kartu dan lanjut baca dari penanda
 - [x] Perkiraan posisi keseluruhan dari penanda manual (EPUB: bobot bagian sama)
 - [x] Pencarian berdasarkan nama file, pengurutan tampilan, dan filter lokasi hilang
-- [x] Tampilan kartu sederhana satu kolom
+- [x] Tampilan kartu yang membungkus sesuai lebar Library
 
 ### ⚙️ Umum
 - [x] Sidebar navigation
-- [x] Pilihan tema gelap bawaan Iced yang disimpan lokal
+- [x] Pilihan tema NovelCraft dan tema gelap bawaan Iced yang disimpan lokal
 - [ ] Single binary, tanpa dependency runtime
 
 ---
 
 ## 🎨 Tema
 
-Di Settings, pilih Tokyo Night, Dark, Nord, atau Dracula. Tema berubah setelah
+Di Settings, pilih NovelCraft, Tokyo Night, Dark, Nord, atau Dracula. Tema berubah setelah
 berhasil disimpan dan dipulihkan saat aplikasi dibuka ulang; sebelum pengaturan
-dimuat atau jika gagal dimuat, digunakan Tokyo Night. Tema berlaku pada antarmuka
+dimuat, jika gagal dimuat, atau jika belum ada pilihan tema, digunakan NovelCraft.
+Pilihan tema lama yang tersimpan tetap dipertahankan. Tema berlaku pada antarmuka
 dan Markdown Reader/preview Writer. Syntax highlighting editor tetap menggunakan
 palet gelap bawaan Iced yang terpisah.
 
@@ -445,7 +448,7 @@ file. Aturan dan integrasi Hyprland belum tersedia.
 - [x] Rendering Markdown dasar
 - [x] File open/save dialog untuk Writer
 - [x] Library dasar: daftar lokasi, pencarian, dan buka di Reader
-- [x] Dark theme Tokyo Night bawaan Iced
+- [x] Tema gelap NovelCraft dan tema bawaan Iced
 
 ### Phase 2 — Novel Writing Suite *(target: v0.3)*
 > Fitur khusus untuk menulis novel secara serius.

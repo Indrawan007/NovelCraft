@@ -145,8 +145,10 @@ baru sudah memiliki penanda tersimpan, penanda itu tetap dipakai. Lokasi baru ha
 berupa file biasa dengan ekstensi yang didukung dan tidak boleh sama persis dengan
 entri lain; alias path yang berbeda tidak dideteksi sebagai duplikat. Lokasi diperiksa
 kembali sebelum menyimpan, tetapi tidak dikunci dan bisa berubah sesudahnya. Jika file
-terhapus, hapus entrinya atau pilih lokasi lain. Library menolak
-menimpa daftar yang berubah sejak dimuat; gunakan **Muat ulang Library** sebelum
+terhapus, hapus entrinya atau pilih lokasi lain. **Hapus dari daftar** meminta
+konfirmasi dan hanya menghapus entri Library, bukan file maupun penanda. Jika
+data Library memuat beberapa entri dengan path identik, semuanya dihapus setelah
+peringatan dan konfirmasi. Library menolak menimpa daftar yang berubah sejak dimuat; gunakan **Muat ulang Library** sebelum
 mencoba menambahkan atau menghapus entri lagi. File Library yang rusak, bukan
 file biasa, atau berupa symbolic link ditolak tanpa diganti. Pada Linux, daftar
 baru ditulis dengan izin privat (maksimal 0600, sesuai umask); ACL dan atribut

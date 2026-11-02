@@ -13,6 +13,7 @@ pub struct Library {
     snapshot: Option<Vec<u8>>,
     busy: bool,
     pending_relink: Option<(PathBuf, PathBuf)>,
+    pending_remove: Option<PathBuf>,
     error: Option<String>,
     bookmarks: Option<Vec<Bookmark>>,
     bookmark_error: Option<String>,
@@ -30,6 +31,8 @@ pub enum Message {
     Import,
     Imported(Result<Option<PathBuf>, String>),
     Remove(PathBuf),
+    ConfirmRemove,
+    CancelRemove,
     Relink(PathBuf),
     Relinked(PathBuf, Result<Option<PathBuf>, String>),
     ConfirmRelink,
@@ -45,7 +48,7 @@ impl Library {
     }
 
     fn controls_blocked(&self) -> bool {
-        self.busy || self.pending_relink.is_some()
+        self.busy || self.pending_relink.is_some() || self.pending_remove.is_some()
     }
 
     pub(crate) fn can_open_book(&self) -> bool {
@@ -116,9 +119,19 @@ impl Library {
                     Err(error) => self.error = Some(error),
                 }
             }
-            Message::Remove(path) if self.loaded && !self.controls_blocked() => {
-                let books = self.books.iter().filter(|book| *book != &path).cloned().collect();
-                return self.save(books);
+            Message::Remove(path) if self.loaded && !self.controls_blocked() && self.books.contains(&path) => {
+                self.error = None;
+                self.pending_remove = Some(path);
+            }
+            Message::CancelRemove if !self.busy => self.pending_remove = None,
+            Message::ConfirmRemove if self.loaded && !self.busy => {
+                if let Some(path) = self.pending_remove.take() {
+                    if self.books.contains(&path) {
+                        let books = without_book(&self.books, &path);
+                        return self.save(books);
+                    }
+                    self.error = Some("Entri tidak lagi ada di Library; muat ulang Library.".into());
+                }
             }
             Message::Relink(old) if self.loaded && !self.controls_blocked() && self.books.contains(&old) => {
                 self.busy = true;
@@ -200,6 +213,18 @@ impl Library {
         .spacing(12)
         .height(Length::Fill);
 
+        if let Some(path) = &self.pending_remove {
+            let count = self.books.iter().filter(|book| *book == path).count();
+            view = view.push(text("Hapus entri ini dari Library? File buku dan penanda tidak dihapus."));
+            view = view.push(text(path.display().to_string()).size(14));
+            if count > 1 {
+                view = view.push(text(format!("Semua {count} entri dengan lokasi ini akan dihapus dari daftar.")).size(14));
+            }
+            view = view.push(row![
+                button("Hapus dari daftar").on_press(Message::ConfirmRemove),
+                button("Batal").on_press(Message::CancelRemove),
+            ].spacing(12));
+        }
         if let Some((old, new)) = &self.pending_relink {
             view = view.push(text("Ubah lokasi entri Library ini? File tidak dipindahkan atau dihapus."));
             view = view.push(text(format!("Lokasi lama: {}", old.display())).size(14));
@@ -373,6 +398,10 @@ async fn pick_book() -> Result<Option<PathBuf>, String> {
         return Err("Lokasi file harus berupa path absolut.".into());
     }
     Ok(Some(path))
+}
+
+fn without_book(books: &[PathBuf], path: &Path) -> Vec<PathBuf> {
+    books.iter().filter(|book| *book != path).cloned().collect()
 }
 
 fn replace_book(books: &[PathBuf], old: &Path, new: &Path) -> Result<Vec<PathBuf>, String> {
@@ -582,6 +611,133 @@ mod tests {
         assert_eq!(library.books.len(), 1);
         assert!(!library.busy);
         assert!(library.error.is_some());
+    }
+
+    #[test]
+    fn removing_entry_requires_confirmation_and_cancel_preserves_state() {
+        let path = PathBuf::from("/books/novel.epub");
+        let other = PathBuf::from("/books/other.txt");
+        let bookmark = Bookmark { path: path.clone(), section: 1, section_count: Some(2), scroll_percent: Some(40), markdown_source: false };
+        let mut library = Library { books: vec![path.clone(), other.clone()], loaded: true,
+            snapshot: Some(b"original".to_vec()), bookmarks: Some(vec![bookmark.clone()]), ..Library::default() };
+        let _ = library.update(Message::Remove(PathBuf::from("/missing")));
+        assert!(library.pending_remove.is_none());
+        let _ = library.update(Message::ConfirmRemove);
+        assert!(!library.busy);
+        let _ = library.update(Message::Remove(path.clone()));
+        assert_eq!(library.pending_remove.as_ref(), Some(&path));
+        assert!(!library.busy);
+        assert!(!library.can_open_book());
+        drop(library.view());
+        let _ = library.update(Message::Remove(other.clone()));
+        let _ = library.update(Message::Relink(other.clone()));
+        let _ = library.update(Message::Import);
+        let _ = library.update(Message::Reload);
+        let _ = library.update(Message::Search("ignored".into()));
+        assert_eq!(library.pending_remove.as_ref(), Some(&path));
+        assert!(library.query.is_empty());
+        assert!(!library.busy);
+        assert_eq!(library.books, vec![path.clone(), other.clone()]);
+        let _ = library.update(Message::CancelRemove);
+        assert!(library.pending_remove.is_none());
+        assert!(library.can_open_book());
+        assert_eq!(library.books, vec![path.clone(), other.clone()]);
+        assert_eq!(library.snapshot.as_deref(), Some(b"original".as_slice()));
+        assert_eq!(library.bookmarks.as_ref().unwrap(), &vec![bookmark.clone()]);
+        let _ = library.update(Message::Remove(path.clone()));
+        let _ = library.update(Message::ConfirmRemove);
+        assert!(library.busy);
+        assert!(library.pending_remove.is_none());
+        assert_eq!(library.books, vec![path.clone(), other.clone()]);
+        let _ = library.update(Message::Saved(Err("konflik".into())));
+        assert!(!library.busy);
+        assert_eq!(library.books, vec![path.clone(), other.clone()]);
+        assert_eq!(library.snapshot.as_deref(), Some(b"original".as_slice()));
+        assert_eq!(library.bookmarks.as_ref().unwrap(), &vec![bookmark.clone()]);
+        let _ = library.update(Message::Remove(path));
+        let _ = library.update(Message::ConfirmRemove);
+        let _ = library.update(Message::Saved(Ok((vec![other.clone()], b"baru".to_vec()))));
+        assert_eq!(library.books, vec![other]);
+        assert_eq!(library.snapshot.as_deref(), Some(b"baru".as_slice()));
+        assert_eq!(library.bookmarks.as_ref().unwrap(), &vec![bookmark]);
+    }
+
+    #[test]
+    fn remove_confirmation_blocks_open_and_continue_messages() {
+        let mut app = crate::NovelCraft::default();
+        let path = PathBuf::from("/novel.txt");
+        let _ = app.library.update(Message::Loaded(Ok((vec![path.clone()], None))));
+        let _ = app.library.update(Message::Remove(path.clone()));
+        let _ = app.update(crate::Message::Library(Message::Open(path.clone())));
+        let _ = app.update(crate::Message::Library(Message::Continue(path)));
+        assert_eq!(app.page, crate::Page::Library);
+        assert!(!app.reader.is_busy());
+        let _ = app.library.update(Message::CancelRemove);
+        assert!(app.library.can_open_book());
+    }
+
+    #[test]
+    fn removing_duplicate_paths_displays_confirmation_and_waits_for_save() {
+        let path = PathBuf::from("/duplicate.txt");
+        let mut library = Library { books: vec![path.clone(), path.clone()], loaded: true, ..Library::default() };
+        let _ = library.update(Message::Remove(path.clone()));
+        assert_eq!(library.pending_remove.as_ref(), Some(&path));
+        assert_eq!(library.books.len(), 2);
+        assert!(without_book(&library.books, &path).is_empty());
+        drop(library.view());
+        let _ = library.update(Message::ConfirmRemove);
+        assert!(library.busy);
+        assert_eq!(library.books.len(), 2);
+        let _ = library.update(Message::Saved(Ok((vec![], b"[]".to_vec()))));
+        assert!(library.books.is_empty());
+    }
+
+    #[tokio::test]
+    async fn removing_entry_keeps_book_and_bookmark_and_detects_library_conflicts() {
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("novelcraft-library-remove-{}-{unique}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let storage = dir.join("library.json");
+        let bookmarks = dir.join("bookmarks.json");
+        let book = dir.join("novel.txt");
+        let other = dir.join("other.txt");
+        let saved_bookmark = Bookmark { path: book.clone(), section: 0, section_count: None, scroll_percent: Some(35), markdown_source: false };
+        let bookmark_bytes = serde_json::to_vec(&vec![saved_bookmark.clone()]).unwrap();
+        tokio::fs::write(&book, b"isi buku").await.unwrap();
+        tokio::fs::write(&bookmarks, &bookmark_bytes).await.unwrap();
+        let initial = vec![book.clone(), other.clone()];
+        let snapshot = save_to(&storage, &initial, None).await.unwrap();
+        let mut library = Library { books: initial.clone(), snapshot: Some(snapshot.clone()), loaded: true,
+            bookmarks: Some(vec![saved_bookmark]), ..Library::default() };
+        let _ = library.update(Message::Remove(book.clone()));
+        let _ = library.update(Message::CancelRemove);
+        assert_eq!(tokio::fs::read(&storage).await.unwrap(), snapshot);
+        assert_eq!(tokio::fs::read(&book).await.unwrap(), b"isi buku".to_vec());
+        assert_eq!(tokio::fs::read(&bookmarks).await.unwrap(), bookmark_bytes);
+        let _ = library.update(Message::Remove(book.clone()));
+        let _ = library.update(Message::ConfirmRemove);
+        let external = b"[\"/external.txt\"]";
+        tokio::fs::write(&storage, external).await.unwrap();
+        let remaining = without_book(&library.books, &book);
+        assert_eq!(remaining, vec![other.clone()]);
+        let result = save_to(&storage, &remaining, Some(snapshot.clone())).await.map(|bytes| (remaining.clone(), bytes));
+        let _ = library.update(Message::Saved(result));
+        assert_eq!(library.books, initial);
+        assert_eq!(library.snapshot.as_deref(), Some(snapshot.as_slice()));
+        assert_eq!(tokio::fs::read(&storage).await.unwrap(), external.to_vec());
+        assert!(library.error.is_some());
+        // After reloading the matching snapshot, a confirmed removal can succeed.
+        let snapshot = save_to(&storage, &initial, Some(external.to_vec())).await.unwrap();
+        let _ = library.update(Message::Loaded(Ok((initial, Some(snapshot.clone())))));
+        let _ = library.update(Message::Remove(book.clone()));
+        let _ = library.update(Message::ConfirmRemove);
+        let result = save_to(&storage, &remaining, Some(snapshot)).await.map(|bytes| (remaining.clone(), bytes));
+        let _ = library.update(Message::Saved(result));
+        assert_eq!(library.books, vec![other]);
+        assert_eq!(load_from(&storage).await.unwrap().0, remaining);
+        assert_eq!(tokio::fs::read(&book).await.unwrap(), b"isi buku".to_vec());
+        assert_eq!(tokio::fs::read(&bookmarks).await.unwrap(), bookmark_bytes);
+        tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 
     #[test]

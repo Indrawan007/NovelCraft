@@ -10,6 +10,8 @@ use tokio::io::AsyncWriteExt;
 pub struct Library {
     books: Vec<PathBuf>,
     query: String,
+    sort: LibrarySort,
+    missing_only: bool,
     loaded: bool,
     snapshot: Option<Vec<u8>>,
     busy: bool,
@@ -23,6 +25,32 @@ pub struct Library {
     availability_revision: u64,
     availability_active: Option<u64>,
     availability_pending: bool,
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+enum LibrarySort {
+    #[default]
+    Added,
+    NameAscending,
+    NameDescending,
+}
+
+impl LibrarySort {
+    fn next(self) -> Self {
+        match self {
+            Self::Added => Self::NameAscending,
+            Self::NameAscending => Self::NameDescending,
+            Self::NameDescending => Self::Added,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Added => "Urutan: daftar",
+            Self::NameAscending => "Urutan: nama A–Z",
+            Self::NameDescending => "Urutan: nama Z–A",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +71,8 @@ pub enum Message {
     RefreshAvailability,
     AvailabilityLoaded(u64, HashMap<PathBuf, Availability>),
     Search(String),
+    CycleSort,
+    ToggleMissingOnly,
     Import,
     Imported(Result<Option<PathBuf>, String>),
     Remove(PathBuf),
@@ -126,6 +156,8 @@ impl Library {
                 }
             }
             Message::Search(query) if !self.controls_blocked() => self.query = query,
+            Message::CycleSort if self.loaded && !self.controls_blocked() => self.sort = self.sort.next(),
+            Message::ToggleMissingOnly if self.loaded && !self.controls_blocked() => self.missing_only = !self.missing_only,
             Message::Import if self.loaded && !self.controls_blocked() => {
                 self.busy = true;
                 self.error = None;
@@ -230,6 +262,20 @@ impl Library {
         Task::perform(check_availability(self.books.clone()), move |result| Message::AvailabilityLoaded(revision, result))
     }
 
+    fn visible_books(&self) -> Vec<&PathBuf> {
+        let query = self.query.to_lowercase();
+        let mut books: Vec<_> = self.books.iter().filter(|path| {
+            matches_name(&book_name(path), &query)
+                && (!self.missing_only || self.availability.get(*path) == Some(&Availability::Missing))
+        }).collect();
+        match self.sort {
+            LibrarySort::Added => {}
+            LibrarySort::NameAscending => books.sort_by_cached_key(|path| book_name(path).to_lowercase()),
+            LibrarySort::NameDescending => books.sort_by_cached_key(|path| std::cmp::Reverse(book_name(path).to_lowercase())),
+        }
+        books
+    }
+
     fn save(&mut self, books: Vec<PathBuf>) -> Task<Message> {
         self.busy = true;
         self.error = None;
@@ -262,11 +308,20 @@ impl Library {
         .height(Length::Fill);
 
         if self.loaded && !self.books.is_empty() {
+            let mut sort = button(self.sort.label());
+            let mut filter = button(if self.missing_only { "Tampilkan semua lokasi" } else { "Hanya tidak ditemukan" });
             let mut refresh = button("Periksa ulang lokasi");
-            if !self.controls_blocked() && self.availability_active.is_none() {
-                refresh = refresh.on_press(Message::RefreshAvailability);
+            if !self.controls_blocked() {
+                sort = sort.on_press(Message::CycleSort);
+                filter = filter.on_press(Message::ToggleMissingOnly);
+                if self.availability_active.is_none() {
+                    refresh = refresh.on_press(Message::RefreshAvailability);
+                }
             }
-            view = view.push(refresh);
+            view = view.push(row![sort, filter, refresh].spacing(12));
+            if self.missing_only {
+                view = view.push(text("Filter berdasarkan pemeriksaan terakhir; lokasi yang belum dapat diperiksa tidak ditampilkan.").size(12));
+            }
         }
         if let Some(path) = &self.pending_remove {
             let count = self.books.iter().filter(|book| *book == path).count();
@@ -308,15 +363,11 @@ impl Library {
             view = view.push(text("Library masih kosong. Tambahkan file EPUB, TXT, atau Markdown."));
         }
 
-        let query = self.query.to_lowercase();
         let mut list = Column::new().spacing(10).width(Length::Fill);
-        let mut matches = 0;
-        for path in &self.books {
-            let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
-            if !matches_name(&name, &query) {
-                continue;
-            }
-            matches += 1;
+        let visible = self.visible_books();
+        let matches = visible.len();
+        for path in visible {
+            let name = book_name(path);
             let mut open = button("Baca");
             let mut remove = button("Hapus dari daftar");
             let mut relink = button("Ubah lokasi");
@@ -358,7 +409,14 @@ impl Library {
             );
         }
         if self.loaded && !self.books.is_empty() && matches == 0 {
-            view = view.push(text("Tidak ada file yang cocok."));
+            let notice = if self.missing_only && self.availability_active.is_some() {
+                "Menunggu pemeriksaan lokasi selesai."
+            } else if self.missing_only {
+                "Tidak ada file yang cocok dengan pencarian dan filter lokasi."
+            } else {
+                "Tidak ada file yang cocok."
+            };
+            view = view.push(text(notice));
         }
         view.push(scrollable(list).height(Length::Fill)).into()
     }
@@ -422,6 +480,10 @@ fn bookmark_label(path: &Path, bookmark: Option<&Bookmark>) -> String {
     } else {
         format!("Penanda tersimpan: {scroll}")
     }
+}
+
+fn book_name(path: &Path) -> std::borrow::Cow<'_, str> {
+    path.file_name().unwrap_or(path.as_os_str()).to_string_lossy()
 }
 
 fn matches_name(name: &str, lowercase_query: &str) -> bool {
@@ -664,6 +726,102 @@ mod tests {
         let _ = app.update(crate::Message::Navigate(crate::Page::Library));
         assert_ne!(app.library.availability_revision, revision);
         assert!(app.library.availability_pending);
+    }
+
+    #[test]
+    fn library_sort_is_stable_and_does_not_change_stored_order() {
+        let a1 = PathBuf::from("/first/novel.TXT");
+        let z = PathBuf::from("/books/Zebra.epub");
+        let a2 = PathBuf::from("/second/NOVEL.txt");
+        let b = PathBuf::from("/books/Bulan.md");
+        let original = vec![a1.clone(), z.clone(), a2.clone(), b.clone()];
+        let mut library = Library { books: original.clone(), loaded: true, snapshot: Some(b"initial".to_vec()), ..Library::default() };
+        assert_eq!(library.visible_books().into_iter().cloned().collect::<Vec<_>>(), original);
+        let _ = library.update(Message::CycleSort);
+        assert_eq!(library.sort, LibrarySort::NameAscending);
+        assert_eq!(library.visible_books().into_iter().cloned().collect::<Vec<_>>(), vec![b.clone(), a1.clone(), a2.clone(), z.clone()]);
+        let _ = library.update(Message::CycleSort);
+        assert_eq!(library.visible_books().into_iter().cloned().collect::<Vec<_>>(), vec![z, a1.clone(), a2.clone(), b]);
+        let _ = library.update(Message::Search("NoVeL".into()));
+        assert_eq!(library.visible_books().into_iter().cloned().collect::<Vec<_>>(), vec![a1, a2]);
+        let _ = library.update(Message::CycleSort);
+        assert_eq!(library.sort, LibrarySort::Added);
+        assert_eq!(library.books, original);
+        assert_eq!(library.snapshot.as_deref(), Some(b"initial".as_slice()));
+        assert!(!library.busy);
+        drop(library.view());
+    }
+
+    #[test]
+    fn missing_filter_combines_search_and_sort_without_treating_unknown_as_missing() {
+        let a = PathBuf::from("/books/A.txt");
+        let b = PathBuf::from("/books/B.txt");
+        let c = PathBuf::from("/books/C.txt");
+        let d = PathBuf::from("/books/D.txt");
+        let e = PathBuf::from("/books/E.txt");
+        let mut library = Library { books: vec![c.clone(), b.clone(), a.clone(), d.clone(), e.clone()], loaded: true,
+            availability: HashMap::from([(a.clone(), Availability::Missing), (b.clone(), Availability::File),
+                (c.clone(), Availability::Missing), (d.clone(), Availability::Unknown), (e.clone(), Availability::NotFile)]),
+            ..Library::default() };
+        let _ = library.update(Message::ToggleMissingOnly);
+        assert_eq!(library.visible_books().into_iter().cloned().collect::<Vec<_>>(), vec![c.clone(), a.clone()]);
+        let _ = library.update(Message::CycleSort);
+        assert_eq!(library.visible_books().into_iter().cloned().collect::<Vec<_>>(), vec![a.clone(), c.clone()]);
+        let _ = library.update(Message::Search("c.".into()));
+        assert_eq!(library.visible_books().into_iter().cloned().collect::<Vec<_>>(), vec![c.clone()]);
+        let _ = library.update(Message::RefreshAvailability);
+        assert!(library.visible_books().is_empty());
+        assert!(library.availability_active.is_some());
+        drop(library.view());
+        let revision = library.availability_active.unwrap();
+        let _ = library.update(Message::AvailabilityLoaded(revision, HashMap::from([(a.clone(), Availability::Missing), (c, Availability::File)])));
+        assert!(library.visible_books().is_empty());
+        let _ = library.update(Message::Search(String::new()));
+        assert_eq!(library.visible_books().into_iter().cloned().collect::<Vec<_>>(), vec![a]);
+        let _ = library.update(Message::ToggleMissingOnly);
+        assert_eq!(library.visible_books().len(), 5);
+        assert!(!library.busy);
+    }
+
+    #[test]
+    fn sort_and_filter_respect_busy_and_confirmation_guards() {
+        let path = PathBuf::from("/book.txt");
+        let mut library = Library { books: vec![path.clone()], loaded: true, ..Library::default() };
+        let _ = library.update(Message::Remove(path));
+        let _ = library.update(Message::CycleSort);
+        let _ = library.update(Message::ToggleMissingOnly);
+        assert_eq!(library.sort, LibrarySort::Added);
+        assert!(!library.missing_only);
+        let _ = library.update(Message::CancelRemove);
+        let _ = library.update(Message::CycleSort);
+        let _ = library.update(Message::ToggleMissingOnly);
+        assert_eq!(library.sort, LibrarySort::NameAscending);
+        assert!(library.missing_only);
+        library.busy = true;
+        let _ = library.update(Message::CycleSort);
+        let _ = library.update(Message::ToggleMissingOnly);
+        assert_eq!(library.sort, LibrarySort::NameAscending);
+        assert!(library.missing_only);
+    }
+
+    #[tokio::test]
+    async fn view_controls_do_not_write_library_or_change_book_files() {
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("novelcraft-library-view-{}-{unique}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let file = dir.join("book.txt");
+        let storage = dir.join("library.json");
+        tokio::fs::write(&file, b"konten").await.unwrap();
+        let snapshot = save_to(&storage, &[file.clone()], None).await.unwrap();
+        let mut library = Library { books: vec![file.clone()], loaded: true, snapshot: Some(snapshot.clone()), ..Library::default() };
+        let _ = library.update(Message::Search("book".into()));
+        let _ = library.update(Message::CycleSort);
+        let _ = library.update(Message::ToggleMissingOnly);
+        assert_eq!(tokio::fs::read(&storage).await.unwrap(), snapshot);
+        assert_eq!(tokio::fs::read(&file).await.unwrap(), b"konten".to_vec());
+        assert_eq!(library.books, vec![file]);
+        assert!(!library.busy);
+        tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 
     #[test]

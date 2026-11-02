@@ -162,6 +162,15 @@ file bisa dibaca atau isinya valid, dan tidak mencegah pembukaan; symbolic link 
 Filesystem yang lambat bisa menunda hasil seluruh pemeriksaan, tetapi tidak mengunci
 kontrol Library lainnya. Pemeriksaan tidak menghapus entri atau mengubah file.
 
+Library dapat diurutkan berdasarkan urutan daftar, nama A–Z, atau nama Z–A;
+tombol urutan berputar di antara ketiganya. Urutan nama menggunakan lowercase
+Unicode dan perbandingan leksikografis, bukan aturan bahasa lokal; nama yang sama
+mempertahankan urutan daftar. Filter **Hanya tidak ditemukan** dapat digabungkan
+dengan pencarian nama. Filter hanya menampilkan status “tidak ditemukan” dari
+pemeriksaan terakhir, bukan lokasi yang belum diperiksa, tidak dapat diperiksa,
+atau bukan file biasa. Saat pemeriksaan berjalan, hasil bisa kosong sampai selesai.
+Urutan dan filter hanya berlaku selama sesi dan tidak mengubah data Library.
+
 **Hapus dari daftar** meminta
 konfirmasi dan hanya menghapus entri Library, bukan file maupun penanda. Jika
 data Library memuat beberapa entri dengan path identik, semuanya dihapus setelah
@@ -227,7 +236,7 @@ Daftar di bawah ini adalah **target MVP**, bukan fitur yang sudah selesai.
 ### 🏠 Library
 - [x] Tampilkan penanda baca manual per file pada kartu dan lanjut baca dari penanda
 - [x] Perkiraan posisi keseluruhan dari penanda manual (EPUB: bobot bagian sama)
-- [x] Pencarian berdasarkan nama file
+- [x] Pencarian berdasarkan nama file, pengurutan tampilan, dan filter lokasi hilang
 - [x] Tampilan kartu sederhana satu kolom
 
 ### ⚙️ Umum

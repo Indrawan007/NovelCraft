@@ -11,6 +11,8 @@ const SCROLL_ID: &str = "reader-content";
 pub struct Reader {
     path: Option<PathBuf>,
     sections: Vec<String>,
+    toc: Vec<crate::epub_reader::TocEntry>,
+    show_toc: bool,
     section: usize,
     section_input: String,
     section_input_error: bool,
@@ -36,6 +38,8 @@ impl Default for Reader {
         Self {
             path: None,
             sections: Vec::new(),
+            toc: Vec::new(),
+            show_toc: false,
             section: 0,
             section_input: String::new(),
             section_input_error: false,
@@ -61,6 +65,7 @@ impl Default for Reader {
 #[derive(Debug, Clone)]
 pub struct Document {
     sections: Vec<String>,
+    toc: Vec<crate::epub_reader::TocEntry>,
     is_epub: bool,
 }
 
@@ -71,6 +76,8 @@ pub enum Message {
     OpenedWithBookmark(Result<(PathBuf, Document, Result<Option<Bookmark>, String>), String>),
     PreviousSection,
     NextSection,
+    ToggleToc,
+    SelectToc(usize),
     SectionInputChanged(String),
     JumpToSection,
     SearchInputChanged(String),
@@ -174,6 +181,8 @@ impl Reader {
         self.link_notice = None;
         self.path = Some(path);
         self.sections = document.sections;
+        self.toc = document.toc;
+        self.show_toc = false;
         self.section = 0;
         self.section_input.clear();
         self.section_input_error = false;
@@ -234,6 +243,20 @@ impl Reader {
                 self.search_notice = None;
                 self.invalidate_scroll_position();
                 return reset_scroll();
+            }
+            Message::ToggleToc if self.is_epub && !self.toc.is_empty() && !self.controls_blocked() => {
+                self.show_toc = !self.show_toc;
+                self.invalidate_scroll_position();
+            }
+            Message::SelectToc(index) if self.is_epub && self.show_toc && !self.controls_blocked() => {
+                if let Some(entry) = self.toc.get(index).filter(|entry| entry.section < self.sections.len()) {
+                    self.section = entry.section;
+                    self.pending_scroll = None;
+                    self.show_toc = false;
+                    self.search_notice = None;
+                    self.invalidate_scroll_position();
+                    return reset_scroll();
+                }
             }
             Message::SectionInputChanged(value) if self.is_epub && !self.controls_blocked() => {
                 self.section_input = value;
@@ -449,6 +472,28 @@ impl Reader {
                     .spacing(12),
             );
             view = view.push(text("Ctrl+PageUp / Ctrl+PageDown: pindah bagian").size(12));
+            if self.toc.is_empty() {
+                view = view.push(text("Daftar isi NCX tidak tersedia; gunakan nomor bagian.").size(12));
+            } else {
+                let label = if self.show_toc { "Tutup daftar isi" } else { "Daftar isi (NCX)" };
+                let mut toggle_toc = button(label);
+                if !self.controls_blocked() {
+                    toggle_toc = toggle_toc.on_press(Message::ToggleToc);
+                }
+                view = view.push(toggle_toc);
+                if self.show_toc {
+                    let mut entries = column![text("Tujuan dibuka dari awal bagian, bukan posisi jangkar.").size(12)].spacing(4);
+                    for (index, entry) in self.toc.iter().enumerate() {
+                        let label = format!("{}{} · bagian {}", "  ".repeat(entry.depth.min(4)), entry.label, entry.section + 1);
+                        let mut item = button(text(label)).width(Length::Fill);
+                        if !self.controls_blocked() {
+                            item = item.on_press(Message::SelectToc(index));
+                        }
+                        entries = entries.push(item);
+                    }
+                    view = view.push(scrollable(entries).height(160).width(Length::Fill));
+                }
+            }
             let mut input = text_input("Nomor", &self.section_input).width(100);
             let mut jump = button("Pergi");
             if !self.controls_blocked() {
@@ -585,15 +630,16 @@ async fn open_file() -> Result<Option<(PathBuf, Document)>, String> {
 async fn read_document(path: &Path) -> Result<Document, String> {
     let is_epub = path.extension().and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("epub"));
-    let sections = if is_epub {
+    let (sections, toc) = if is_epub {
         let path = path.to_owned();
-        tokio::task::spawn_blocking(move || crate::epub_reader::read_epub(&path))
+        let book = tokio::task::spawn_blocking(move || crate::epub_reader::read_epub(&path))
             .await
-            .map_err(|error| format!("Gagal memproses EPUB: {error}"))??
+            .map_err(|error| format!("Gagal memproses EPUB: {error}"))??;
+        (book.sections, book.toc)
     } else {
-        vec![read_text(path).await?]
+        (vec![read_text(path).await?], Vec::new())
     };
-    Ok(Document { sections, is_epub })
+    Ok(Document { sections, toc, is_epub })
 }
 
 async fn read_text(path: &Path) -> Result<String, String> {
@@ -649,7 +695,7 @@ mod tests {
     fn open_with_bookmark_restores_section_and_markdown_mode() {
         let mut reader = Reader::default();
         let path = PathBuf::from("book.epub");
-        let doc = Document { sections: vec!["Satu".into(), "Dua".into()], is_epub: true };
+        let doc = Document { sections: vec!["Satu".into(), "Dua".into()], is_epub: true, toc: Vec::new() };
         let bookmark = Bookmark { path: path.clone(), section: 1, section_count: Some(2), scroll_percent: Some(65), markdown_source: false };
         let _ = reader.update(Message::OpenedWithBookmark(Ok((path.clone(), doc, Ok(Some(bookmark))))));
         assert_eq!(reader.path.as_ref(), Some(&path));
@@ -657,7 +703,7 @@ mod tests {
         assert_eq!(reader.pending_scroll, Some(65));
         assert!(!reader.busy);
         let path = PathBuf::from("book.md");
-        let doc = Document { sections: vec!["# Judul".into()], is_epub: false };
+        let doc = Document { sections: vec!["# Judul".into()], is_epub: false, toc: Vec::new() };
         let bookmark = Bookmark { path: path.clone(), section: 0, section_count: None, scroll_percent: None, markdown_source: true };
         let _ = reader.update(Message::OpenedWithBookmark(Ok((path, doc, Ok(Some(bookmark))))));
         assert!(reader.show_source);
@@ -667,7 +713,7 @@ mod tests {
     #[test]
     fn open_with_missing_or_invalid_bookmark_starts_at_top_and_reports_problem() {
         let path = PathBuf::from("book.epub");
-        let doc = Document { sections: vec!["Satu".into()], is_epub: true };
+        let doc = Document { sections: vec!["Satu".into()], is_epub: true, toc: Vec::new() };
         for result in [Ok(None), Err("rusak".into()), Ok(Some(Bookmark {
             path: path.clone(), section: 4, section_count: Some(5), scroll_percent: Some(20), markdown_source: false,
         }))] {
@@ -696,7 +742,7 @@ mod tests {
     fn continuation_defers_restore_when_reader_is_hidden() {
         let mut app = crate::NovelCraft::default();
         let path = PathBuf::from("book.epub");
-        let doc = Document { sections: vec!["Satu".into()], is_epub: true };
+        let doc = Document { sections: vec!["Satu".into()], is_epub: true, toc: Vec::new() };
         let bookmark = Bookmark { path: path.clone(), section: 0, section_count: Some(1), scroll_percent: Some(35), markdown_source: false };
         let _ = app.update(crate::Message::Reader(Message::OpenedWithBookmark(Ok((path, doc, Ok(Some(bookmark)))))));
         assert_eq!(app.reader.pending_scroll, Some(35));
@@ -710,7 +756,7 @@ mod tests {
         app.page = crate::Page::Reader;
         app.pending_close = Some(iced::window::Id::unique());
         let path = PathBuf::from("book.epub");
-        let doc = Document { sections: vec!["Satu".into()], is_epub: true };
+        let doc = Document { sections: vec!["Satu".into()], is_epub: true, toc: Vec::new() };
         let bookmark = Bookmark { path: path.clone(), section: 0, section_count: Some(1), scroll_percent: Some(35), markdown_source: false };
         let _ = app.update(crate::Message::Reader(Message::OpenedWithBookmark(Ok((path, doc, Ok(Some(bookmark)))))));
         assert_eq!(app.reader.pending_scroll, Some(35));
@@ -723,7 +769,7 @@ mod tests {
         let mut reader = Reader::default();
         assert!(reader.snapshot_bookmark().is_none());
         let path = PathBuf::from("book.epub");
-        let doc = Document { sections: vec!["Satu".into(), "Dua".into()], is_epub: true };
+        let doc = Document { sections: vec!["Satu".into(), "Dua".into()], is_epub: true, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((path.clone(), doc)))));
         reader.section = 1;
         reader.scroll_percent = Some(50);
@@ -740,7 +786,7 @@ mod tests {
     fn restoring_bookmark_sets_section_and_defers_scroll_until_requested() {
         let mut reader = Reader::default();
         let path = PathBuf::from("book.epub");
-        let doc = Document { sections: vec!["Satu".into(), "Dua".into()], is_epub: true };
+        let doc = Document { sections: vec!["Satu".into(), "Dua".into()], is_epub: true, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((path.clone(), doc)))));
         let revision = reader.scroll_revision;
         let bookmark = Bookmark { path, section: 1, section_count: None, scroll_percent: Some(65), markdown_source: false };
@@ -756,7 +802,7 @@ mod tests {
     fn bookmark_restores_markdown_mode_and_handles_unmeasured_position() {
         let mut reader = Reader::default();
         let path = PathBuf::from("book.md");
-        let doc = Document { sections: vec!["# Judul".into()], is_epub: false };
+        let doc = Document { sections: vec!["# Judul".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((path.clone(), doc)))));
         let bookmark = Bookmark { path, section: 0, section_count: None, scroll_percent: None, markdown_source: true };
         let _ = reader.update(Message::BookmarkLoaded(Ok(Some(bookmark))));
@@ -769,7 +815,7 @@ mod tests {
     fn invalid_bookmark_does_not_move_reader() {
         let mut reader = Reader::default();
         let path = PathBuf::from("book.epub");
-        let doc = Document { sections: vec!["Satu".into()], is_epub: true };
+        let doc = Document { sections: vec!["Satu".into()], is_epub: true, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((path.clone(), doc)))));
         let bookmark = Bookmark { path, section: 4, section_count: None, scroll_percent: Some(50), markdown_source: false };
         let _ = reader.update(Message::BookmarkLoaded(Ok(Some(bookmark))));
@@ -805,7 +851,7 @@ mod tests {
     #[test]
     fn scroll_position_resets_for_new_section_and_ignores_stale_events() {
         let mut reader = Reader::default();
-        let document = Document { sections: vec!["Satu".into(), "Dua".into()], is_epub: true };
+        let document = Document { sections: vec!["Satu".into(), "Dua".into()], is_epub: true, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("book.epub"), document)))));
         let old_revision = reader.scroll_revision;
         let _ = reader.update(Message::Scrolled { revision: old_revision, percent: Some(75) });
@@ -823,13 +869,13 @@ mod tests {
     #[test]
     fn scroll_position_resets_when_changing_text_size_and_opening_a_file() {
         let mut reader = Reader::default();
-        let document = Document { sections: vec!["Teks".into()], is_epub: false };
+        let document = Document { sections: vec!["Teks".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("old.txt"), document)))));
         let _ = reader.update(Message::Scrolled { revision: reader.scroll_revision, percent: Some(60) });
         let _ = reader.update(Message::FontLarger);
         assert_eq!(reader.scroll_percent, None);
         let _ = reader.update(Message::Scrolled { revision: reader.scroll_revision, percent: Some(30) });
-        let document = Document { sections: vec!["Lain".into()], is_epub: false };
+        let document = Document { sections: vec!["Lain".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("new.txt"), document)))));
         assert_eq!(reader.scroll_percent, None);
     }
@@ -868,7 +914,7 @@ mod tests {
     fn opening_document_replaces_contents() {
         let mut reader = Reader::default();
         let path = PathBuf::from("novel.md");
-        let document = Document { sections: vec!["Isi novel".into()], is_epub: false };
+        let document = Document { sections: vec!["Isi novel".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((path.clone(), document)))));
         assert_eq!(reader.path, Some(path));
         assert_eq!(reader.sections[0], "Isi novel");
@@ -892,7 +938,7 @@ mod tests {
     #[test]
     fn section_search_changes_section_only_for_a_match_and_resets_scroll() {
         let mut reader = Reader::default();
-        let doc = Document { sections: vec!["Awal".into(), "Malam bulan".into(), "Akhir bulan".into()], is_epub: true };
+        let doc = Document { sections: vec!["Awal".into(), "Malam bulan".into(), "Akhir bulan".into()], is_epub: true, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some(("book.epub".into(), doc)))));
         let revision = reader.scroll_revision;
         let _ = reader.update(Message::Scrolled { revision, percent: Some(20) });
@@ -924,7 +970,7 @@ mod tests {
         assert_eq!(reader.section, 0);
         reader.busy = false;
         let _ = reader.update(Message::SearchInputChanged("dua".into()));
-        let doc = Document { sections: vec!["teks".into()], is_epub: false };
+        let doc = Document { sections: vec!["teks".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some(("book.txt".into(), doc)))));
         assert!(reader.search_input.is_empty());
         assert!(reader.search_notice.is_none());
@@ -949,7 +995,7 @@ mod tests {
     #[test]
     fn jumping_to_section_resets_scroll_and_invalid_input_preserves_position() {
         let mut reader = Reader::default();
-        let doc = Document { sections: vec!["Satu".into(), "Dua".into(), "Tiga".into()], is_epub: true };
+        let doc = Document { sections: vec!["Satu".into(), "Dua".into(), "Tiga".into()], is_epub: true, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some(("book.epub".into(), doc)))));
         let old_revision = reader.scroll_revision;
         let _ = reader.update(Message::Scrolled { revision: old_revision, percent: Some(40) });
@@ -983,13 +1029,49 @@ mod tests {
         assert!(reader.section_input.is_empty());
         reader.busy = false;
         let _ = reader.update(Message::SectionInputChanged("2".into()));
-        let doc = Document { sections: vec!["teks".into()], is_epub: false };
+        let doc = Document { sections: vec!["teks".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some(("book.txt".into(), doc)))));
         assert!(reader.section_input.is_empty());
         let _ = reader.update(Message::SectionInputChanged("1".into()));
         let _ = reader.update(Message::JumpToSection);
         assert!(reader.section_input.is_empty());
         assert_eq!(reader.section, 0);
+    }
+
+    #[test]
+    fn ncx_navigation_is_guarded_and_jumps_to_start_of_selected_section() {
+        use crate::epub_reader::TocEntry;
+        let mut reader = Reader::default();
+        let doc = Document {
+            sections: vec!["awal".into(), "akhir".into()],
+            toc: vec![TocEntry { label: "Akhir".into(), section: 1, depth: 0 }],
+            is_epub: true,
+        };
+        let _ = reader.update(Message::Opened(Ok(Some(("book.epub".into(), doc)))));
+        let _ = reader.update(Message::SelectToc(0));
+        assert_eq!(reader.section, 0); // Panel is closed.
+        reader.scroll_percent = Some(50);
+        let revision = reader.scroll_revision;
+        let _ = reader.update(Message::ToggleToc);
+        assert!(reader.show_toc);
+        assert_eq!(reader.scroll_percent, None);
+        let _ = reader.update(Message::Scrolled { revision, percent: Some(50) });
+        assert_eq!(reader.scroll_percent, None);
+        drop(reader.view(&Theme::TokyoNight));
+        reader.busy = true;
+        let _ = reader.update(Message::SelectToc(0));
+        assert_eq!(reader.section, 0);
+        reader.busy = false;
+        let _ = reader.update(Message::SelectToc(99));
+        assert_eq!(reader.section, 0);
+        let _ = reader.update(Message::SelectToc(0));
+        assert_eq!(reader.section, 1);
+        assert!(!reader.show_toc);
+        assert_eq!(reader.scroll_percent, None);
+        let text = Document { sections: vec!["catatan".into()], toc: Vec::new(), is_epub: false };
+        let _ = reader.update(Message::Opened(Ok(Some(("note.txt".into(), text)))));
+        assert!(reader.toc.is_empty());
+        assert!(!reader.show_toc);
     }
 
     #[test]
@@ -1052,14 +1134,14 @@ mod tests {
     #[test]
     fn section_navigation_is_bounded_and_resets_for_new_document() {
         let mut reader = Reader::default();
-        let document = Document { sections: vec!["Satu".into(), "Dua".into()], is_epub: true };
+        let document = Document { sections: vec!["Satu".into(), "Dua".into()], is_epub: true, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("book.epub"), document)))));
         let _ = reader.update(Message::PreviousSection);
         assert_eq!(reader.section, 0);
         let _ = reader.update(Message::NextSection);
         let _ = reader.update(Message::NextSection);
         assert_eq!(reader.section, 1);
-        let document = Document { sections: vec!["Lain".into()], is_epub: false };
+        let document = Document { sections: vec!["Lain".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("other.txt"), document)))));
         assert_eq!(reader.section, 0);
         assert!(!reader.is_epub);
@@ -1071,6 +1153,7 @@ mod tests {
         let document = Document {
             sections: vec!["# Judul\n\nTeks **tebal**.\n\n- Satu\n- Dua".into()],
             is_epub: false,
+            toc: Vec::new(),
         };
         let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("novel.MD"), document)))));
         assert!(reader.is_markdown);
@@ -1089,10 +1172,10 @@ mod tests {
     #[test]
     fn opening_text_clears_markdown_state() {
         let mut reader = Reader::default();
-        let doc = Document { sections: vec!["# Judul".into()], is_epub: false };
+        let doc = Document { sections: vec!["# Judul".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("book.markdown"), doc)))));
         let _ = reader.update(Message::ToggleSource);
-        let doc = Document { sections: vec!["# teks biasa".into()], is_epub: false };
+        let doc = Document { sections: vec!["# teks biasa".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("book.txt"), doc)))));
         assert!(!reader.is_markdown);
         assert!(!reader.show_source);

@@ -17,6 +17,9 @@ pub struct Reader {
     section_input_error: bool,
     search_input: String,
     search_notice: Option<String>,
+    show_text_search: bool,
+    text_search_line: Option<usize>,
+    text_search_excerpt: Option<String>,
     is_epub: bool,
     is_markdown: bool,
     markdown_items: Vec<markdown::Item>,
@@ -47,6 +50,9 @@ impl Default for Reader {
             section_input_error: false,
             search_input: String::new(),
             search_notice: None,
+            show_text_search: false,
+            text_search_line: None,
+            text_search_excerpt: None,
             is_epub: false,
             is_markdown: false,
             markdown_items: Vec::new(),
@@ -83,6 +89,7 @@ pub enum Message {
     SelectToc(usize),
     SectionInputChanged(String),
     JumpToSection,
+    ToggleTextSearch,
     SearchInputChanged(String),
     SearchNext,
     SearchPrevious,
@@ -220,6 +227,9 @@ impl Reader {
         self.section_input_error = false;
         self.search_input.clear();
         self.search_notice = None;
+        self.show_text_search = false;
+        self.text_search_line = None;
+        self.text_search_excerpt = None;
         self.is_epub = document.is_epub;
         self.error = None;
     }
@@ -305,14 +315,35 @@ impl Reader {
                 }
                 self.section_input_error = true;
             }
-            Message::SearchInputChanged(value) if self.is_epub && !self.controls_blocked() => {
+            Message::ToggleTextSearch if !self.is_epub && self.path.is_some() && !self.controls_blocked() => {
+                self.show_text_search = !self.show_text_search;
+                self.invalidate_scroll_position();
+            }
+            Message::SearchInputChanged(value) if (self.is_epub || self.path.is_some() && self.show_text_search) && !self.controls_blocked() => {
                 self.search_input = value;
                 self.search_notice = None;
+                self.text_search_line = None;
+                self.text_search_excerpt = None;
             }
-            Message::SearchNext | Message::SearchPrevious if self.is_epub && !self.controls_blocked() => {
+            Message::SearchNext | Message::SearchPrevious if (self.is_epub || self.path.is_some() && self.show_text_search) && !self.controls_blocked() => {
                 let query = self.search_input.trim();
                 if query.is_empty() {
                     self.search_notice = Some("Masukkan teks yang ingin dicari.".into());
+                } else if !self.is_epub {
+                    if let Some(result) = find_text_line(
+                        self.sections.first().map(String::as_str).unwrap_or(""),
+                        query,
+                        self.text_search_line,
+                        matches!(message, Message::SearchNext),
+                    ) {
+                        self.text_search_line = Some(result.line);
+                        self.search_notice = Some(format!("Baris {} · hasil {} dari {}", result.line + 1, result.rank, result.total));
+                        self.text_search_excerpt = Some(result.excerpt);
+                    } else {
+                        self.text_search_line = None;
+                        self.text_search_excerpt = None;
+                        self.search_notice = Some("Teks tidak ditemukan di sumber file.".into());
+                    }
                 } else if let Some(section) = find_matching_section(
                     &self.sections, self.section, query, matches!(message, Message::SearchNext),
                 ) {
@@ -364,7 +395,7 @@ impl Reader {
                     Ok(Some(bookmark)) if self.path.as_ref() == Some(&bookmark.path)
                         && bookmark.section < self.sections.len() => {
                         self.section = bookmark.section;
-                        self.search_notice = None;
+                        if self.is_epub { self.search_notice = None; }
                         self.show_source = self.is_markdown && bookmark.markdown_source;
                         self.pending_scroll = Some(bookmark.scroll_percent.unwrap_or(0));
                         self.invalidate_scroll_position();
@@ -534,7 +565,15 @@ impl Reader {
                 String::new()
             };
             view = view.push(container(text(section_error).size(14)).height(24));
-            let mut search = text_input("Cari teks di bagian EPUB", &self.search_input).width(Length::Fill);
+        }
+        if !self.is_epub && self.path.is_some() {
+            let mut toggle_search = button(if self.show_text_search { "Tutup pencarian" } else { "Cari dalam file" });
+            if !self.controls_blocked() { toggle_search = toggle_search.on_press(Message::ToggleTextSearch); }
+            view = view.push(toggle_search);
+        }
+        if self.is_epub || self.path.is_some() && self.show_text_search {
+            let placeholder = if self.is_epub { "Cari teks di bagian EPUB" } else { "Cari di sumber TXT / Markdown" };
+            let mut search = text_input(placeholder, &self.search_input).width(Length::Fill);
             let mut previous_match = button("← Cari");
             let mut next_match = button("Cari →");
             if !self.controls_blocked() {
@@ -544,6 +583,11 @@ impl Reader {
             }
             view = view.push(row![search, previous_match, next_match].spacing(12));
             view = view.push(container(text(self.search_notice.as_deref().unwrap_or("")).size(14)).height(24));
+            if !self.is_epub {
+                let excerpt = self.text_search_excerpt.as_deref().unwrap_or("");
+                view = view.push(scrollable(text(excerpt).size(14)).height(72).width(Length::Fill));
+                view = view.push(text("Mencari per baris di sumber; cuplikan tidak menggeser atau menyorot dokumen.").size(12));
+            }
         }
 
         let contents = self.sections.get(self.section).map(String::as_str).unwrap_or("");
@@ -623,6 +667,56 @@ fn find_matching_section(sections: &[String], current: usize, query: &str, forwa
         }
     }
     None
+}
+
+struct TextLineMatch {
+    line: usize,
+    rank: usize,
+    total: usize,
+    excerpt: String,
+}
+
+// Search lines without collecting a potentially huge list of matches. Unicode
+// lowercase is applied per character so offsets can be mapped back to UTF-8.
+fn lower_chars(text: &str) -> String {
+    text.chars().flat_map(char::to_lowercase).collect()
+}
+
+fn find_text_line(text: &str, query: &str, current: Option<usize>, forward: bool) -> Option<TextLineMatch> {
+    let query = lower_chars(query.trim());
+    if query.is_empty() || query.contains(['\n', '\r']) { return None; }
+    let mut total = 0;
+    let mut first = None;
+    let mut last = None;
+    let mut before = None;
+    let mut after = None;
+    for (index, line) in text.lines().enumerate() {
+        if lower_chars(line).contains(&query) {
+            total += 1;
+            let hit = (index, total);
+            first.get_or_insert(hit);
+            last = Some(hit);
+            if current.is_some_and(|pos| index < pos) { before = Some(hit); }
+            if current.is_some_and(|pos| index > pos) && after.is_none() { after = Some(hit); }
+        }
+    }
+    let (line, rank) = if forward { after.or(first) } else { before.or(last) }?;
+    let source = text.lines().nth(line)?;
+    let lower_offset = lower_chars(source).find(&query)?;
+    let mut lower_bytes = 0;
+    let mut match_start = 0;
+    for (index, ch) in source.char_indices() {
+        let next = lower_bytes + ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+        if lower_offset < next { match_start = index; break; }
+        lower_bytes = next;
+    }
+    let start = source[..match_start].char_indices().rev().nth(39).map(|(i, _)| i).unwrap_or(0);
+    let end = source[match_start..].char_indices().nth(80).map(|(i, _)| match_start + i).unwrap_or(source.len());
+    let excerpt: String = source[start..end].chars().map(|ch| if ch.is_control() { ' ' } else { ch }).collect();
+    Some(TextLineMatch {
+        line, rank, total,
+        excerpt: format!("{}{}{}", if start > 0 { "…" } else { "" }, excerpt, if end < source.len() { "…" } else { "" }),
+    })
 }
 
 fn parse_section_number(input: &str, section_count: usize) -> Option<usize> {
@@ -1096,9 +1190,81 @@ mod tests {
         let _ = reader.update(Message::Opened(Ok(Some(("book.txt".into(), doc)))));
         assert!(reader.search_input.is_empty());
         assert!(reader.search_notice.is_none());
+        let _ = reader.update(Message::ToggleTextSearch);
         let _ = reader.update(Message::SearchInputChanged("teks".into()));
         let _ = reader.update(Message::SearchNext);
+        assert_eq!(reader.search_input, "teks");
+        assert_eq!(reader.text_search_line, Some(0));
+    }
+
+    #[test]
+    fn text_search_finds_lines_wraps_and_builds_utf8_safe_excerpts() {
+        let text = "Pertama BULAN dan bulan\r\nTidak ada\nÉCLAIR bulan\nTerakhir BULAN";
+        let hit = find_text_line(text, " bulan ", None, true).unwrap();
+        assert_eq!((hit.line, hit.rank, hit.total), (0, 1, 3));
+        assert_eq!(hit.excerpt, "Pertama BULAN dan bulan");
+        let hit = find_text_line(text, "BULAN", Some(hit.line), true).unwrap();
+        assert_eq!((hit.line, hit.rank, hit.total), (2, 2, 3));
+        assert!(hit.excerpt.contains("ÉCLAIR"));
+        let hit = find_text_line(text, "bulan", Some(3), true).unwrap();
+        assert_eq!((hit.line, hit.rank), (0, 1));
+        let hit = find_text_line(text, "bulan", Some(0), false).unwrap();
+        assert_eq!((hit.line, hit.rank), (3, 3));
+        assert_eq!(find_text_line(text, "éclair", None, true).unwrap().line, 2);
+        assert_eq!(find_text_line("İSTANBUL", "i\u{307}st", None, true).unwrap().excerpt, "İSTANBUL");
+        assert!(find_text_line(text, "bulan\nTidak", None, true).is_none());
+        assert!(find_text_line(text, "  ", None, true).is_none());
+        assert!(find_text_line(text, "absen", None, true).is_none());
+        let long_line = format!("{}Target{}", "🌙".repeat(100), "a".repeat(100));
+        let excerpt = find_text_line(&long_line, "target", None, true).unwrap().excerpt;
+        assert!(excerpt.starts_with('…') && excerpt.ends_with('…'));
+        assert!(excerpt.contains("Target"));
+        assert!(excerpt.chars().count() <= 122);
+    }
+
+    #[test]
+    fn text_search_state_is_guarded_and_does_not_change_scroll_or_bookmark() {
+        let mut reader = Reader::default();
+        let doc = Document { sections: vec!["# Bulan\nSatu\nbulan dua".into()], is_epub: false, toc: Vec::new() };
+        let _ = reader.update(Message::Opened(Ok(Some(("book.md".into(), doc)))));
+        assert!(!reader.show_text_search);
+        let _ = reader.update(Message::SearchInputChanged("bulan".into()));
         assert!(reader.search_input.is_empty());
+        let _ = reader.update(Message::ToggleTextSearch);
+        assert!(reader.show_text_search);
+        let revision = reader.scroll_revision;
+        let _ = reader.update(Message::Scrolled { revision, percent: Some(57) });
+        let bookmark = reader.snapshot_bookmark().unwrap();
+        let _ = reader.update(Message::SearchInputChanged("BULAN".into()));
+        let _ = reader.update(Message::SearchNext);
+        assert_eq!(reader.text_search_line, Some(0));
+        assert_eq!(reader.text_search_excerpt.as_deref(), Some("# Bulan"));
+        assert!(reader.search_notice.as_deref().unwrap().contains("1 dari 2"));
+        let _ = reader.update(Message::SearchPrevious);
+        assert_eq!(reader.text_search_line, Some(2));
+        assert_eq!(reader.scroll_revision, revision);
+        assert_eq!(reader.scroll_percent, Some(57));
+        assert_eq!(reader.snapshot_bookmark().unwrap().scroll_percent, bookmark.scroll_percent);
+        drop(reader.view(&Theme::TokyoNight, true, ""));
+        let _ = reader.update(Message::SearchInputChanged("tidak ada".into()));
+        assert!(reader.text_search_excerpt.is_none());
+        let _ = reader.update(Message::SearchNext);
+        assert!(reader.search_notice.as_deref().unwrap().contains("tidak ditemukan"));
+        reader.pending_remove_bookmark = true;
+        let _ = reader.update(Message::ToggleTextSearch);
+        let _ = reader.update(Message::SearchInputChanged("lain".into()));
+        assert!(reader.show_text_search);
+        assert_eq!(reader.search_input, "tidak ada");
+        reader.pending_remove_bookmark = false;
+        let _ = reader.update(Message::ToggleTextSearch);
+        assert!(!reader.show_text_search);
+        assert_eq!(reader.scroll_percent, None);
+        let doc = Document { sections: vec!["baru".into()], is_epub: false, toc: Vec::new() };
+        let _ = reader.update(Message::Opened(Ok(Some(("other.txt".into(), doc)))));
+        assert!(reader.search_input.is_empty());
+        assert!(reader.text_search_line.is_none());
+        assert!(reader.text_search_excerpt.is_none());
+        assert!(!reader.show_text_search);
     }
 
     #[test]

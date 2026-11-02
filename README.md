@@ -89,6 +89,15 @@ gaya belum dirender. Markdown
 memiliki tampilan dasar untuk judul, paragraf, daftar, penekanan, dan blok kode,
 serta pilihan untuk melihat sumber mentah. Tabel, gambar, HTML, dan elemen lain
 yang belum didukung dapat dilihat di mode sumber. Tautan tidak dibuka otomatis.
+Untuk TXT dan Markdown, **Cari dalam file** mencari per baris pada sumber UTF-8
+(Markdown termasuk markup), lalu menampilkan nomor baris dan cuplikan. Tombol
+sebelumnya/berikutnya berputar antarbaris yang cocok, bukan antar-kemunculan
+pada baris yang sama; cuplikan berpusat pada kecocokan pertama di baris itu.
+Baris dipisahkan oleh LF atau CRLF. Pencarian mengabaikan kapitalisasi dengan lowercase per
+karakter Unicode (bukan case folding atau normalisasi Unicode penuh), tidak
+mencocokkan lintas baris, dan tidak menggeser atau menyorot teks dokumen.
+Pencarian dapat lambat pada file besar; membuka/menutup panel dapat mengubah
+layout dan menghapus pengukuran posisi gulir sementara.
 Library menampilkan kartu satu kolom berisi nama dan lokasi file, menyediakan
 pencarian nama file, menampilkan penanda manual yang tersimpan, dan dapat membuka
 file di Reader. Settings menyediakan pilihan tema gelap yang disimpan lokal;

@@ -701,7 +701,7 @@ impl NovelCraft {
             }
         }
         let sidebar_content: Element<'_, Message> = if is_workspace && compact {
-            let mut menu = button(text("Menu").size(11))
+            let mut menu = button(text("☰").size(18))
                 .width(Length::Fill)
                 .height(40)
                 .style(mockup_style::navigation_menu);

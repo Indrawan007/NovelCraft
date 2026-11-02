@@ -149,6 +149,10 @@ enum Message {
     Navigate(Page),
     ToggleFocusMode,
     ToggleFullscreen,
+    EnterZen,
+    ExitZen,
+    ZenWindowReady(u64, Option<window::Id>),
+    ZenModeReady(u64, window::Id, window::Mode),
     FullscreenWindowReady(u64, Option<window::Id>),
     FullscreenModeReady(u64, window::Id, window::Mode),
     LoadSettings,
@@ -182,6 +186,8 @@ struct NovelCraft {
     fullscreen_revision: u64,
     fullscreen_pending: bool,
     fullscreen_notice: Option<String>,
+    zen_mode: bool,
+    zen_restore_window: Option<window::Id>,
 }
 
 impl NovelCraft {
@@ -259,6 +265,7 @@ impl NovelCraft {
                 Task::none()
             }
             Message::Navigate(page) => {
+                let exit_zen = if self.zen_mode && page != Page::Writer { self.exit_zen() } else { Task::none() };
                 if self.page == Page::Reader && page != Page::Reader {
                     self.reader.suspend_scroll_position();
                 }
@@ -267,14 +274,15 @@ impl NovelCraft {
                 }
                 self.page = page;
                 if page == Page::Reader && self.pending_close.is_none() {
-                    self.reader.take_restore_task().map(Message::Reader)
+                    Task::batch([exit_zen, self.reader.take_restore_task().map(Message::Reader)])
                 } else if page == Page::Library {
                     Task::batch([
+                        exit_zen,
                         self.library.update(library::Message::RefreshBookmarks).map(Message::Library),
                         self.library.update(library::Message::RefreshAvailability).map(Message::Library),
                     ])
                 } else {
-                    Task::none()
+                    exit_zen
                 }
             }
             Message::ToggleFocusMode if matches!(self.page, Page::Reader | Page::Writer) && self.pending_close.is_none() => {
@@ -286,7 +294,7 @@ impl NovelCraft {
                 Task::none()
             }
             Message::ToggleFocusMode => Task::none(),
-            Message::ToggleFullscreen if self.pending_close.is_none() && !self.fullscreen_pending => {
+            Message::ToggleFullscreen if self.pending_close.is_none() && !self.fullscreen_pending && !self.zen_mode => {
                 self.fullscreen_revision = self.fullscreen_revision.wrapping_add(1);
                 self.fullscreen_pending = true;
                 self.fullscreen_notice = None;
@@ -316,6 +324,43 @@ impl NovelCraft {
                 window::change_mode(id, next)
             }
             Message::ToggleFullscreen | Message::FullscreenWindowReady(..) | Message::FullscreenModeReady(..) => Task::none(),
+            Message::EnterZen if self.page == Page::Writer && self.pending_close.is_none()
+                && !self.zen_mode && !self.fullscreen_pending && self.writer.can_enter_zen() => {
+                self.zen_mode = true;
+                self.zen_restore_window = None;
+                self.fullscreen_notice = None;
+                self.fullscreen_revision = self.fullscreen_revision.wrapping_add(1);
+                self.fullscreen_pending = true;
+                let revision = self.fullscreen_revision;
+                window::get_latest().map(move |id| Message::ZenWindowReady(revision, id))
+            }
+            Message::ExitZen if self.zen_mode && self.pending_close.is_none() => self.exit_zen(),
+            Message::ZenWindowReady(revision, id)
+                if self.zen_mode && self.fullscreen_pending && self.pending_close.is_none() && revision == self.fullscreen_revision => {
+                if let Some(id) = id {
+                    window::get_mode(id).map(move |mode| Message::ZenModeReady(revision, id, mode))
+                } else {
+                    self.fullscreen_pending = false;
+                    self.fullscreen_notice = Some("Jendela tidak ditemukan; mode Zen tanpa fullscreen.".into());
+                    Task::none()
+                }
+            }
+            Message::ZenModeReady(revision, id, mode)
+                if self.zen_mode && self.fullscreen_pending && self.pending_close.is_none() && revision == self.fullscreen_revision => {
+                self.fullscreen_pending = false;
+                match mode {
+                    window::Mode::Windowed => {
+                        self.zen_restore_window = Some(id);
+                        window::change_mode(id, window::Mode::Fullscreen)
+                    }
+                    window::Mode::Fullscreen => Task::none(),
+                    window::Mode::Hidden => {
+                        self.fullscreen_notice = Some("Jendela tersembunyi; mode Zen tanpa fullscreen.".into());
+                        Task::none()
+                    }
+                }
+            }
+            Message::EnterZen | Message::ExitZen | Message::ZenWindowReady(..) | Message::ZenModeReady(..) => Task::none(),
             Message::LoadSettings if !self.settings_busy && !self.settings_loaded => {
                 self.settings_busy = true;
                 self.settings_error = None;
@@ -423,6 +468,17 @@ impl NovelCraft {
         }
     }
 
+    fn exit_zen(&mut self) -> Task<Message> {
+        self.zen_mode = false;
+        self.fullscreen_revision = self.fullscreen_revision.wrapping_add(1);
+        self.fullscreen_pending = false;
+        if let Some(id) = self.zen_restore_window.take() {
+            window::change_mode(id, window::Mode::Windowed)
+        } else {
+            Task::none()
+        }
+    }
+
     fn open_library_book(&mut self, path: std::path::PathBuf, resume: bool) -> Task<Message> {
         if !self.library.can_open_book() {
             return Task::none();
@@ -501,6 +557,12 @@ impl NovelCraft {
         }
 
         let theme = self.theme_choice.iced_theme();
+        if self.zen_mode && self.page == Page::Writer {
+            let mut bar = row![button("Keluar Zen").on_press(Message::ExitZen), horizontal_space()].spacing(12);
+            if let Some(notice) = &self.fullscreen_notice { bar = bar.push(text(notice).size(12)); }
+            return container(column![bar, self.writer.zen_view(&theme).map(Message::Writer)].spacing(12))
+                .width(Length::Fill).height(Length::Fill).padding(32).into();
+        }
         let mut navigation = Column::new().spacing(4);
         if !self.focus_mode {
             navigation = navigation.push(text("NAVIGATE").size(10).color(mockup_style::subtle(&theme)));
@@ -582,6 +644,11 @@ impl NovelCraft {
             let label = if self.focus_mode { "Keluar mode fokus" } else { "Mode fokus" };
             topbar_content = topbar_content.push(button(text(label).size(12)).style(button::secondary).on_press(Message::ToggleFocusMode));
         }
+        if self.page == Page::Writer {
+            let mut zen = button(text("Mode Zen").size(12)).style(button::secondary);
+            if self.writer.can_enter_zen() && !self.fullscreen_pending { zen = zen.on_press(Message::EnterZen); }
+            topbar_content = topbar_content.push(zen);
+        }
         if let Some(notice) = &self.fullscreen_notice {
             topbar_content = topbar_content.push(text(notice).size(12));
         }
@@ -600,6 +667,53 @@ impl NovelCraft {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zen_restores_only_fullscreen_it_started_and_ignores_late_results() {
+        let mut app = NovelCraft::default();
+        let _ = app.update(Message::Navigate(Page::Writer));
+        let _ = app.update(Message::EnterZen);
+        assert!(app.zen_mode);
+        let revision = app.fullscreen_revision;
+        let id = window::Id::unique();
+        let _ = app.update(Message::ZenModeReady(revision, id, window::Mode::Windowed));
+        assert_eq!(app.zen_restore_window, Some(id));
+        let _ = app.update(Message::ExitZen);
+        assert!(!app.zen_mode);
+        assert_eq!(app.zen_restore_window, None);
+        let _ = app.update(Message::ZenModeReady(revision, id, window::Mode::Windowed));
+        assert!(!app.zen_mode);
+        assert_eq!(app.zen_restore_window, None);
+        let _ = app.update(Message::EnterZen);
+        let revision = app.fullscreen_revision;
+        let _ = app.update(Message::ZenModeReady(revision, id, window::Mode::Fullscreen));
+        assert_eq!(app.zen_restore_window, None);
+        drop(app.view());
+        let _ = app.update(Message::Navigate(Page::Library));
+        assert!(!app.zen_mode);
+        assert_eq!(app.zen_restore_window, None);
+    }
+
+    #[test]
+    fn zen_respects_writer_confirmation_and_close_guard() {
+        let mut app = NovelCraft::default();
+        let _ = app.update(Message::Navigate(Page::Writer));
+        make_draft_dirty(&mut app);
+        let _ = app.update(Message::Writer(writer::Message::NewDraft));
+        let _ = app.update(Message::EnterZen);
+        assert!(!app.zen_mode);
+        assert!(app.writer.has_unsaved_changes());
+        let _ = app.update(Message::Writer(writer::Message::CancelDiscard));
+        let _ = app.update(Message::EnterZen);
+        assert!(app.zen_mode);
+        let id = window::Id::unique();
+        let revision = app.fullscreen_revision;
+        let _ = app.update(Message::CloseRequested(id));
+        let _ = app.update(Message::ZenModeReady(revision, id, window::Mode::Windowed));
+        assert_eq!(app.zen_restore_window, None);
+        assert_eq!(app.pending_close, Some(id));
+        assert!(app.writer.has_unsaved_changes());
+    }
 
     #[test]
     fn fullscreen_target_uses_current_window_mode() {

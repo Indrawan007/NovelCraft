@@ -157,6 +157,14 @@ menutup aplikasi. Simpan draft secara manual atau aktifkan auto-save per file; p
 melindungi dari penghentian paksa, crash, atau kehilangan daya. Dialog file
 Wayland memerlukan portal desktop yang berfungsi.
 
+**Mode Zen** di Writer menyembunyikan navigasi, panel chapter, dan toolbar,
+serta meminta fullscreen. **Keluar Zen** mengembalikan tampilan dan hanya
+meminta mode jendela jika Zen yang mengaktifkan fullscreen. Fullscreen yang
+sudah aktif sebelumnya tetap dipertahankan; saat Zen aktif, toggle F11 aplikasi
+nonaktif. Shortcut simpan tetap tersedia, dan dialog konfirmasi atau kesalahan
+menampilkan kontrol Writer agar dapat ditangani. Efek fullscreen bergantung
+compositor; perubahan fullscreen oleh compositor/aplikasi lain tidak dilacak.
+
 **Auto-save** dapat diaktifkan secara eksplisit setelah file dibuka atau disimpan;
 konfirmasi menjelaskan normalisasi newline. Setiap 30 detik, jika file tersebut
 memiliki perubahan dan tidak ada dialog/operasi yang menghalangi, Writer menulis
@@ -184,8 +192,9 @@ penggantian masih dapat terlewat. Tetap buat backup.
 Menyimpan file yang belum diedit mempertahankan isi UTF-8 aslinya, termasuk
 format newline. Setelah diedit, ekspor editor Iced menormalkan pemisah baris
 menjadi LF, dapat menambahkan newline di akhir, dan dapat mengurangi baris kosong
-akhir. Writer meminta konfirmasi sebelum setiap penyimpanan draft yang diedit,
-termasuk Simpan sebagai; batal mempertahankan draft tanpa menulis file. Dialog
+akhir. Penyimpanan manual draft yang diedit meminta konfirmasi, termasuk Simpan
+sebagai; batal mempertahankan draft tanpa menulis file. Auto-save yang sudah
+disetujui berlaku tanpa konfirmasi pada setiap penulisan berikutnya. Dialog
 menampilkan jumlah pemisah baris pada versi tersimpan dan pada hasil yang akan
 ditulis, termasuk jumlah pemisah di akhir. Perbedaannya dapat berasal dari edit
 pengguna maupun normalisasi, sehingga bukan diff isi. Periksa hasil simpan dan
@@ -500,7 +509,7 @@ file. Aturan dan integrasi Hyprland belum tersedia.
 - [ ] World-building notes (tempat, waktu, lore)
 - [ ] Word count target harian (target sementara per draft sudah tersedia)
 - [ ] Writing streak tracker (kalender)
-- [ ] Distraction-free / Zen mode lengkap (mode fokus sidebar dan fullscreen terpisah sudah tersedia)
+- [x] Mode Zen Writer: editor minimal dan fullscreen dengan pemulihan mode sebelumnya (bergantung compositor)
 - [x] Auto-save setiap 30 detik untuk file bernama (opt-in per file; tanpa pemulihan draft tanpa nama)
 - [ ] SQLite storage untuk semua metadata
 

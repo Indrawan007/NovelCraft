@@ -436,6 +436,26 @@ impl Writer {
         }
     }
 
+    pub(crate) fn can_enter_zen(&self) -> bool {
+        !self.controls_blocked()
+    }
+
+    pub fn zen_view<'a>(&'a self, theme: &Theme) -> Element<'a, Message> {
+        // Show normal controls whenever a confirmation, operation or error needs attention.
+        if self.controls_blocked() || self.error.is_some() {
+            return self.view(theme);
+        }
+        let editor = text_editor(&self.content)
+            .height(Length::Fill)
+            .highlight(self.syntax_token(), highlighter::Theme::Base16Ocean)
+            .key_binding(editor_key_binding)
+            .on_action(Message::Edit);
+        column![
+            editor,
+            text(format!("{} kata{}", self.word_count, if self.dirty { " · belum disimpan" } else { "" })).size(12),
+        ].spacing(8).height(Length::Fill).into()
+    }
+
     pub fn view<'a>(&'a self, theme: &Theme) -> Element<'a, Message> {
         let mut new_draft = button("Draft baru");
         let mut open = button("Buka");

@@ -803,6 +803,25 @@ mod tests {
     }
 
     #[test]
+    fn fullscreen_request_invalidates_measured_reader_scroll() {
+        let mut app = crate::NovelCraft::default();
+        let doc = Document { sections: vec!["Isi buku".into()], is_epub: false, toc: Vec::new() };
+        let _ = app.reader.update(Message::Opened(Ok(Some(("/book.txt".into(), doc)))));
+        let _ = app.update(crate::Message::Navigate(crate::Page::Reader));
+        let revision = app.reader.scroll_revision;
+        let _ = app.reader.update(Message::Scrolled { revision, percent: Some(40) });
+        let _ = app.update(crate::Message::ToggleFullscreen);
+        let request = app.fullscreen_revision;
+        let id = iced::window::Id::unique();
+        let _ = app.update(crate::Message::FullscreenWindowReady(request, Some(id)));
+        let _ = app.update(crate::Message::FullscreenModeReady(request, id, iced::window::Mode::Windowed));
+        assert_eq!(app.reader.scroll_percent, None);
+        assert_ne!(app.reader.scroll_revision, revision);
+        let _ = app.reader.update(Message::Scrolled { revision, percent: Some(40) });
+        assert_eq!(app.reader.scroll_percent, None);
+    }
+
+    #[test]
     fn deleting_bookmark_requires_confirmation_and_cancel_preserves_document() {
         let mut reader = Reader { path: Some("book.epub".into()), sections: vec!["satu".into(), "dua".into()], section: 1, is_epub: true, ..Reader::default() };
         let _ = reader.update(Message::AskRemoveBookmark);

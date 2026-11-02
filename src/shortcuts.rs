@@ -12,10 +12,16 @@ pub enum Shortcut {
     SaveAs,
     PreviousSection,
     NextSection,
+    ToggleFullscreen,
 }
 
 /// Linux shortcuts intentionally exclude Alt/AltGr and Super combinations.
 pub fn from_key(key: Key<&str>, modifiers: Modifiers) -> Option<Shortcut> {
+    if matches!(&key, Key::Named(iced::keyboard::key::Named::F11))
+        && !modifiers.control() && !modifiers.shift() && !modifiers.alt() && !modifiers.logo()
+    {
+        return Some(Shortcut::ToggleFullscreen);
+    }
     if !modifiers.control() || modifiers.alt() || modifiers.logo() {
         return None;
     }
@@ -70,6 +76,16 @@ mod tests {
         assert_eq!(from_key(Key::Named(Named::PageUp), Modifiers::CTRL | Modifiers::SHIFT), None);
         assert_eq!(from_key(Key::Named(Named::PageDown), Modifiers::CTRL | Modifiers::ALT), None);
         assert_eq!(from_key(Key::Named(Named::PageDown), Modifiers::CTRL | Modifiers::LOGO), None);
+    }
+
+    #[test]
+    fn fullscreen_shortcut_requires_unmodified_f11() {
+        use iced::keyboard::key::Named;
+        assert_eq!(from_key(Key::Named(Named::F11), Modifiers::empty()), Some(Shortcut::ToggleFullscreen));
+        assert_eq!(from_key(Key::Named(Named::F11), Modifiers::CTRL), None);
+        assert_eq!(from_key(Key::Named(Named::F11), Modifiers::SHIFT), None);
+        assert_eq!(from_key(Key::Named(Named::F11), Modifiers::ALT), None);
+        assert_eq!(from_key(Key::Named(Named::F11), Modifiers::LOGO), None);
     }
 
     #[test]

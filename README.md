@@ -56,6 +56,13 @@ selama sesi dan direset ketika draft baru dibuat atau sebuah file berhasil dibuk
 Target menghitung seluruh isi draft berdasarkan pemisah whitespace, termasuk
 teks yang sudah ada dan markup Markdown. Ini bukan target harian; mengubah target
 tidak mengubah atau menyimpan isi file. Kosongkan kolom untuk menyembunyikan target.
+Tombol **Fullscreen (F11)** terpisah dari mode fokus dan tersedia di semua halaman;
+tekan lagi untuk kembali ke mode berjendela. Fullscreen dapat digabungkan dengan
+mode fokus, dan tidak otomatis berakhir saat berpindah halaman atau disimpan
+antar-sesi. Permintaan fullscreen bergantung pada dukungan compositor/window
+manager; tombol membaca mode jendela saat ditekan, tetapi perubahan eksternal atau
+kompositor dapat memengaruhi hasilnya. Mengubah ukuran tampilan dapat menggeser
+teks Reader dan membatalkan pengukuran gulir sebelumnya.
 Reader dapat membuka file EPUB, TXT/Markdown UTF-8, menggulir teks, dan mengatur
 ukuran font (12–32). Tombol A+/A− menyimpan ukuran secara lokal dan menerapkannya
 setelah penyimpanan berhasil; ukuran dipulihkan saat aplikasi dibuka ulang.
@@ -253,6 +260,7 @@ masih dapat terlewat. Hindari menjalankan beberapa instance bersamaan.
 
 | Shortcut | Aksi |
 |---|---|
+| `F11` | Minta masuk/keluar fullscreen |
 | `Ctrl+1`, `Ctrl+2`, `Ctrl+3` | Buka Library, Reader, atau Writer |
 | `Ctrl+,` | Buka Settings |
 | `Ctrl+PageUp`, `Ctrl+PageDown` | Bagian EPUB sebelumnya atau berikutnya di Reader |
@@ -432,7 +440,7 @@ file. Aturan dan integrasi Hyprland belum tersedia.
 - [ ] World-building notes (tempat, waktu, lore)
 - [ ] Word count target harian (target sementara per draft sudah tersedia)
 - [ ] Writing streak tracker (kalender)
-- [ ] Distraction-free / Zen mode lengkap (fullscreen; mode fokus sidebar sudah tersedia)
+- [ ] Distraction-free / Zen mode lengkap (mode fokus sidebar dan fullscreen terpisah sudah tersedia)
 - [ ] Auto-save setiap 30 detik
 - [ ] SQLite storage untuk semua metadata
 

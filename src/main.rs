@@ -57,6 +57,14 @@ fn startup_file(args: impl IntoIterator<Item = OsString>, cwd: std::io::Result<P
     Ok(Some(absolute))
 }
 
+fn fullscreen_target(mode: window::Mode) -> Option<window::Mode> {
+    match mode {
+        window::Mode::Windowed => Some(window::Mode::Fullscreen),
+        window::Mode::Fullscreen => Some(window::Mode::Windowed),
+        window::Mode::Hidden => None,
+    }
+}
+
 fn shortcut_event(event: iced::Event, status: event::Status, _: window::Id) -> Option<Message> {
     if status != event::Status::Ignored {
         return None;
@@ -134,6 +142,9 @@ impl ThemeChoice {
 enum Message {
     Navigate(Page),
     ToggleFocusMode,
+    ToggleFullscreen,
+    FullscreenWindowReady(u64, Option<window::Id>),
+    FullscreenModeReady(u64, window::Id, window::Mode),
     LoadSettings,
     SettingsLoaded(Result<settings::Settings, String>),
     SelectTheme(ThemeChoice),
@@ -162,6 +173,9 @@ struct NovelCraft {
     reader: reader::Reader,
     library: library::Library,
     pending_close: Option<window::Id>,
+    fullscreen_revision: u64,
+    fullscreen_pending: bool,
+    fullscreen_notice: Option<String>,
 }
 
 impl NovelCraft {
@@ -194,6 +208,9 @@ impl NovelCraft {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::CloseRequested(id) => {
+                // A delayed window query must not change fullscreen after a close request.
+                self.fullscreen_revision = self.fullscreen_revision.wrapping_add(1);
+                self.fullscreen_pending = false;
                 if self.file_operation_in_progress() || self.writer.has_unsaved_changes() {
                     if self.page == Page::Reader {
                         self.reader.suspend_scroll_position();
@@ -260,6 +277,36 @@ impl NovelCraft {
                 Task::none()
             }
             Message::ToggleFocusMode => Task::none(),
+            Message::ToggleFullscreen if self.pending_close.is_none() && !self.fullscreen_pending => {
+                self.fullscreen_revision = self.fullscreen_revision.wrapping_add(1);
+                self.fullscreen_pending = true;
+                self.fullscreen_notice = None;
+                let revision = self.fullscreen_revision;
+                window::get_latest().map(move |id| Message::FullscreenWindowReady(revision, id))
+            }
+            Message::FullscreenWindowReady(revision, id)
+                if self.fullscreen_pending && self.pending_close.is_none() && revision == self.fullscreen_revision =>
+            {
+                if let Some(id) = id {
+                    window::get_mode(id).map(move |mode| Message::FullscreenModeReady(revision, id, mode))
+                } else {
+                    self.fullscreen_pending = false;
+                    self.fullscreen_notice = Some("Jendela tidak ditemukan; fullscreen tidak diubah.".into());
+                    Task::none()
+                }
+            }
+            Message::FullscreenModeReady(revision, id, mode)
+                if self.fullscreen_pending && self.pending_close.is_none() && revision == self.fullscreen_revision =>
+            {
+                self.fullscreen_pending = false;
+                let Some(next) = fullscreen_target(mode) else {
+                    self.fullscreen_notice = Some("Jendela tersembunyi; fullscreen tidak diubah.".into());
+                    return Task::none();
+                };
+                self.reader.invalidate_scroll_position();
+                window::change_mode(id, next)
+            }
+            Message::ToggleFullscreen | Message::FullscreenWindowReady(..) | Message::FullscreenModeReady(..) => Task::none(),
             Message::LoadSettings if !self.settings_busy && !self.settings_loaded => {
                 self.settings_busy = true;
                 self.settings_error = None;
@@ -324,6 +371,7 @@ impl NovelCraft {
                     Shortcut::Reader => Message::Navigate(Page::Reader),
                     Shortcut::Writer => Message::Navigate(Page::Writer),
                     Shortcut::Settings => Message::Navigate(Page::Settings),
+                    Shortcut::ToggleFullscreen => Message::ToggleFullscreen,
                     Shortcut::NewDraft if self.page == Page::Writer => Message::Writer(writer::Message::NewDraft),
                     Shortcut::Open if self.page == Page::Writer => Message::Writer(writer::Message::Open),
                     Shortcut::Save if self.page == Page::Writer => Message::Writer(writer::Message::Save),
@@ -485,10 +533,17 @@ impl NovelCraft {
             .height(Length::Fill)
             .padding(32);
 
-        let mut topbar_content = row![text("novelcraft").size(18)].spacing(16);
+        let mut fullscreen = button("Fullscreen (F11)");
+        if !self.fullscreen_pending {
+            fullscreen = fullscreen.on_press(Message::ToggleFullscreen);
+        }
+        let mut topbar_content = row![text("novelcraft").size(18), fullscreen].spacing(16);
         if matches!(self.page, Page::Reader | Page::Writer) {
             let label = if self.focus_mode { "Keluar mode fokus" } else { "Mode fokus" };
             topbar_content = topbar_content.push(button(label).on_press(Message::ToggleFocusMode));
+        }
+        if let Some(notice) = &self.fullscreen_notice {
+            topbar_content = topbar_content.push(text(notice).size(12));
         }
         let topbar = container(topbar_content)
             .width(Length::Fill)
@@ -503,6 +558,73 @@ impl NovelCraft {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fullscreen_target_uses_current_window_mode() {
+        assert_eq!(fullscreen_target(window::Mode::Windowed), Some(window::Mode::Fullscreen));
+        assert_eq!(fullscreen_target(window::Mode::Fullscreen), Some(window::Mode::Windowed));
+        assert_eq!(fullscreen_target(window::Mode::Hidden), None);
+    }
+
+    #[test]
+    fn fullscreen_queries_one_at_a_time_and_handles_missing_or_hidden_window() {
+        let mut app = NovelCraft::default();
+        let _ = app.update(Message::Shortcut(shortcuts::Shortcut::ToggleFullscreen));
+        assert!(app.fullscreen_pending);
+        let revision = app.fullscreen_revision;
+        let _ = app.update(Message::ToggleFullscreen);
+        assert_eq!(app.fullscreen_revision, revision);
+        let _ = app.update(Message::FullscreenWindowReady(revision, None));
+        assert!(!app.fullscreen_pending);
+        assert!(app.fullscreen_notice.as_deref().unwrap().contains("tidak ditemukan"));
+        let _ = app.update(Message::ToggleFullscreen);
+        assert!(app.fullscreen_notice.is_none());
+        let revision = app.fullscreen_revision;
+        let id = window::Id::unique();
+        let _ = app.update(Message::FullscreenWindowReady(revision, Some(id)));
+        assert!(app.fullscreen_pending);
+        let _ = app.update(Message::FullscreenModeReady(revision, id, window::Mode::Hidden));
+        assert!(!app.fullscreen_pending);
+        assert!(app.fullscreen_notice.as_deref().unwrap().contains("tersembunyi"));
+        let _ = app.update(Message::ToggleFullscreen);
+        let revision = app.fullscreen_revision;
+        let _ = app.update(Message::FullscreenWindowReady(revision, Some(id)));
+        let _ = app.update(Message::FullscreenModeReady(revision, id, window::Mode::Windowed));
+        assert!(!app.fullscreen_pending);
+        assert!(app.fullscreen_notice.is_none());
+        drop(app.view());
+    }
+
+    #[test]
+    fn fullscreen_cannot_bypass_close_guard_or_apply_stale_queries() {
+        let mut app = NovelCraft::default();
+        let _ = app.update(Message::Navigate(Page::Writer));
+        make_draft_dirty(&mut app);
+        let _ = app.update(Message::ToggleFocusMode);
+        let _ = app.update(Message::ToggleFullscreen);
+        let first = app.fullscreen_revision;
+        let id = window::Id::unique();
+        let _ = app.update(Message::FullscreenWindowReady(first, Some(id)));
+        let _ = app.update(Message::CloseRequested(id));
+        assert_eq!(app.pending_close, Some(id));
+        assert!(!app.fullscreen_pending);
+        let _ = app.update(Message::Shortcut(shortcuts::Shortcut::ToggleFullscreen));
+        let _ = app.update(Message::ToggleFullscreen);
+        assert!(!app.fullscreen_pending);
+        let _ = app.update(Message::CancelClose);
+        assert!(app.writer.has_unsaved_changes());
+        assert!(app.focus_mode);
+        let _ = app.update(Message::ToggleFullscreen);
+        let second = app.fullscreen_revision;
+        assert_ne!(first, second);
+        let _ = app.update(Message::FullscreenModeReady(first, id, window::Mode::Windowed));
+        assert!(app.fullscreen_pending);
+        let _ = app.update(Message::FullscreenWindowReady(second, Some(id)));
+        let _ = app.update(Message::FullscreenModeReady(second, id, window::Mode::Fullscreen));
+        assert!(!app.fullscreen_pending);
+        assert!(app.writer.has_unsaved_changes());
+        assert!(app.focus_mode);
+    }
 
     #[test]
     fn writer_focus_mode_keeps_unsaved_draft_and_is_unavailable_in_library() {

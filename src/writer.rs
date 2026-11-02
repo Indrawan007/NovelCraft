@@ -691,6 +691,25 @@ mod tests {
     }
 
     #[test]
+    fn fullscreen_does_not_bypass_writer_save_confirmation() {
+        let mut app = crate::NovelCraft::default();
+        let _ = app.update(crate::Message::Navigate(crate::Page::Writer));
+        let _ = app.update(crate::Message::Writer(Message::Edit(text_editor::Action::Edit(text_editor::Edit::Insert('x')))));
+        let _ = app.update(crate::Message::Writer(Message::Save));
+        assert_eq!(app.writer.pending_format_save, Some(false));
+        let _ = app.update(crate::Message::ToggleFullscreen);
+        let revision = app.fullscreen_revision;
+        let id = iced::window::Id::unique();
+        let _ = app.update(crate::Message::FullscreenWindowReady(revision, Some(id)));
+        let _ = app.update(crate::Message::FullscreenModeReady(revision, id, iced::window::Mode::Windowed));
+        assert_eq!(app.writer.pending_format_save, Some(false));
+        assert!(app.writer.dirty);
+        let _ = app.update(crate::Message::Writer(Message::CancelFormatSave));
+        assert!(app.writer.pending_format_save.is_none());
+        assert!(app.writer.dirty);
+    }
+
+    #[test]
     fn clean_save_preserves_original_line_endings_and_empty_new_draft() {
         let mut writer = Writer::default();
         assert_eq!(writer.contents_to_save(), "");

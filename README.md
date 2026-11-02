@@ -57,7 +57,11 @@ Target menghitung seluruh isi draft berdasarkan pemisah whitespace, termasuk
 teks yang sudah ada dan markup Markdown. Ini bukan target harian; mengubah target
 tidak mengubah atau menyimpan isi file. Kosongkan kolom untuk menyembunyikan target.
 Reader dapat membuka file EPUB, TXT/Markdown UTF-8, menggulir teks, dan mengatur
-ukuran font. **Mode fokus** di Reader juga menyembunyikan sidebar tanpa fullscreen;
+ukuran font (12–32). Tombol A+/A− menyimpan ukuran secara lokal dan menerapkannya
+setelah penyimpanan berhasil; ukuran dipulihkan saat aplikasi dibuka ulang.
+Selama Settings dimuat/disimpan atau gagal dimuat, tombol font dinonaktifkan.
+Jika Settings gagal dimuat, perbaiki file dan gunakan **Coba muat ulang Settings**;
+jika penyimpanan gagal, ukuran tetap dan tombol dapat dicoba lagi. **Mode fokus** di Reader juga menyembunyikan sidebar tanpa fullscreen;
 berpindah halaman mengakhirinya. Mengubah lebar area baca dapat menggeser posisi
 teks karena pembungkusan ulang; indikator gulir menjadi `—` hingga terukur lagi. Posisi gulir ditampilkan untuk dokumen teks atau bagian EPUB saat
 konten dapat digulir; tanda `—` berarti posisi belum tersedia. Angka tersebut
@@ -162,7 +166,7 @@ Daftar di bawah ini adalah **target MVP**, bukan fitur yang sudah selesai.
 - [x] Buka EPUB sebagai teks, lompat ke bagian spine, dan cari bagian berdasarkan teks
 - [x] Daftar isi dasar EPUB 3 nav dan NCX dipetakan ke bagian spine (tanpa navigasi jangkar)
 - [x] Render Markdown dasar dan lihat sumber
-- [x] Atur ukuran font (A+/A-)
+- [x] Atur ukuran font (A+/A-) dan pulihkan antar-sesi
 - [x] Mode fokus Reader (sembunyikan sidebar; tanpa fullscreen)
 - [x] Scroll reading dan indikator posisi gulir per dokumen/bagian
 - [x] Simpan, pulihkan, dan hapus satu penanda posisi manual per file antar-sesi
@@ -198,9 +202,9 @@ dimuat atau jika gagal dimuat, digunakan Tokyo Night. Tema berlaku pada antarmuk
 dan Markdown Reader/preview Writer. Syntax highlighting editor tetap menggunakan
 palet gelap bawaan Iced yang terpisah.
 
-Pengaturan tersimpan di `$XDG_CONFIG_HOME/novelcraft/settings.json`, atau
+Tema dan ukuran font Reader tersimpan di `$XDG_CONFIG_HOME/novelcraft/settings.json`, atau
 `~/.config/novelcraft/settings.json` jika `XDG_CONFIG_HOME` tidak absolut. File
-rusak, tema tidak dikenal, dan symbolic link ditolak tanpa ditimpa; perbaiki file
+rusak, tema/ukuran font tidak valid, dan symbolic link ditolak tanpa ditimpa; perbaiki file
 lalu muat ulang di Settings. Jika penyimpanan gagal, tema aktif tidak berubah.
 Penulisan memakai file sementara dan rename; di Linux file hasil simpan privat
 (0600), dan ACL/atribut tambahan tidak dipertahankan. Tidak ada sinkronisasi atau

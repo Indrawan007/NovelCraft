@@ -3,8 +3,7 @@ use iced::widget::{button, column, container, markdown, row, scrollable, text, t
 use iced::{Element, Length, Task, Theme};
 use std::path::{Path, PathBuf};
 
-const MIN_FONT_SIZE: u16 = 12;
-const MAX_FONT_SIZE: u16 = 32;
+use crate::settings::{DEFAULT_READER_FONT_SIZE, MAX_READER_FONT_SIZE as MAX_FONT_SIZE, MIN_READER_FONT_SIZE as MIN_FONT_SIZE};
 const FONT_STEP: u16 = 2;
 const SCROLL_ID: &str = "reader-content";
 
@@ -50,7 +49,7 @@ impl Default for Reader {
             markdown_items: Vec::new(),
             show_source: false,
             link_notice: None,
-            font_size: 18,
+            font_size: DEFAULT_READER_FONT_SIZE,
             scroll_percent: None,
             scroll_revision: 0,
             pending_scroll: None,
@@ -105,6 +104,23 @@ impl Reader {
 
     fn controls_blocked(&self) -> bool {
         self.busy || self.pending_remove_bookmark
+    }
+
+    pub(crate) fn requested_font_size(&self, message: &Message) -> Option<u16> {
+        if self.controls_blocked() { return None; }
+        let size = match message {
+            Message::FontSmaller => self.font_size.saturating_sub(FONT_STEP).max(MIN_FONT_SIZE),
+            Message::FontLarger => self.font_size.saturating_add(FONT_STEP).min(MAX_FONT_SIZE),
+            _ => return None,
+        };
+        (size != self.font_size).then_some(size)
+    }
+
+    pub(crate) fn apply_font_size(&mut self, size: u16) {
+        if (MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&size) && size != self.font_size {
+            self.font_size = size;
+            self.invalidate_scroll_position();
+        }
     }
 
     fn snapshot_bookmark(&self) -> Option<Bookmark> {
@@ -304,14 +320,6 @@ impl Reader {
                 self.invalidate_scroll_position();
                 self.link_notice = Some(format!("Tautan tidak dibuka otomatis: {url}"));
             }
-            Message::FontSmaller if !self.controls_blocked() => {
-                self.invalidate_scroll_position();
-                self.font_size = self.font_size.saturating_sub(FONT_STEP).max(MIN_FONT_SIZE);
-            }
-            Message::FontLarger if !self.controls_blocked() => {
-                self.invalidate_scroll_position();
-                self.font_size = self.font_size.saturating_add(FONT_STEP).min(MAX_FONT_SIZE);
-            }
             Message::SaveBookmark if !self.controls_blocked() && self.path.is_some() => {
                 let bookmark = self.snapshot_bookmark().unwrap();
                 self.busy = true;
@@ -392,7 +400,7 @@ impl Reader {
         Task::none()
     }
 
-    pub fn view<'a>(&'a self, theme: &Theme) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, theme: &Theme, font_settings_ready: bool, font_status: &'static str) -> Element<'a, Message> {
         let mut open = button("Buka file");
         if !self.controls_blocked() {
             open = open.on_press(Message::Open);
@@ -406,11 +414,11 @@ impl Reader {
             remove_bookmark = remove_bookmark.on_press(Message::AskRemoveBookmark);
         }
         let mut smaller = button("A−");
-        if !self.controls_blocked() && self.font_size > MIN_FONT_SIZE {
+        if font_settings_ready && !self.controls_blocked() && self.font_size > MIN_FONT_SIZE {
             smaller = smaller.on_press(Message::FontSmaller);
         }
         let mut larger = button("A+");
-        if !self.controls_blocked() && self.font_size < MAX_FONT_SIZE {
+        if font_settings_ready && !self.controls_blocked() && self.font_size < MAX_FONT_SIZE {
             larger = larger.on_press(Message::FontLarger);
         }
 
@@ -422,6 +430,7 @@ impl Reader {
         let mut view = column![
             text("Reader").size(32),
             row![open, smaller, text(self.font_size.to_string()), larger].spacing(12),
+            container(text(font_status).size(12)).height(24),
             text(filename).size(14),
             row![save_bookmark, restore_bookmark, remove_bookmark].spacing(12),
         ]
@@ -872,7 +881,7 @@ mod tests {
         let document = Document { sections: vec!["Teks".into()], is_epub: false, toc: Vec::new() };
         let _ = reader.update(Message::Opened(Ok(Some((PathBuf::from("old.txt"), document)))));
         let _ = reader.update(Message::Scrolled { revision: reader.scroll_revision, percent: Some(60) });
-        let _ = reader.update(Message::FontLarger);
+        reader.apply_font_size(reader.requested_font_size(&Message::FontLarger).unwrap());
         assert_eq!(reader.scroll_percent, None);
         let _ = reader.update(Message::Scrolled { revision: reader.scroll_revision, percent: Some(30) });
         let document = Document { sections: vec!["Lain".into()], is_epub: false, toc: Vec::new() };
@@ -884,13 +893,18 @@ mod tests {
     fn font_size_stays_within_bounds() {
         let mut reader = Reader::default();
         for _ in 0..100 {
-            let _ = reader.update(Message::FontSmaller);
+            if let Some(size) = reader.requested_font_size(&Message::FontSmaller) { reader.apply_font_size(size); }
         }
         assert_eq!(reader.font_size, MIN_FONT_SIZE);
         for _ in 0..100 {
-            let _ = reader.update(Message::FontLarger);
+            if let Some(size) = reader.requested_font_size(&Message::FontLarger) { reader.apply_font_size(size); }
         }
         assert_eq!(reader.font_size, MAX_FONT_SIZE);
+        assert_eq!(reader.requested_font_size(&Message::FontLarger), None);
+        reader.apply_font_size(0);
+        assert_eq!(reader.font_size, MAX_FONT_SIZE);
+        reader.busy = true;
+        assert_eq!(reader.requested_font_size(&Message::FontSmaller), None);
     }
 
     #[test]
@@ -1057,7 +1071,7 @@ mod tests {
         assert_eq!(reader.scroll_percent, None);
         let _ = reader.update(Message::Scrolled { revision, percent: Some(50) });
         assert_eq!(reader.scroll_percent, None);
-        drop(reader.view(&Theme::TokyoNight));
+        drop(reader.view(&Theme::TokyoNight, true, ""));
         reader.busy = true;
         let _ = reader.update(Message::SelectToc(0));
         assert_eq!(reader.section, 0);
@@ -1072,6 +1086,49 @@ mod tests {
         let _ = reader.update(Message::Opened(Ok(Some(("note.txt".into(), text)))));
         assert!(reader.toc.is_empty());
         assert!(!reader.show_toc);
+    }
+
+    #[test]
+    fn saved_font_size_applies_only_after_success_and_respects_guards() {
+        use crate::{Message as AppMessage, NovelCraft, Page};
+        let mut app = NovelCraft::default();
+        app.page = Page::Reader;
+        let _ = app.update(AppMessage::Reader(Message::FontLarger));
+        assert!(!app.settings_busy); // Settings have not loaded.
+        assert_eq!(app.reader.font_size, 18);
+        let _ = app.update(AppMessage::SettingsLoaded(Ok(crate::settings::Settings {
+            theme: crate::ThemeChoice::Nord, reader_font_size: 24,
+        })));
+        assert_eq!(app.reader.font_size, 24);
+        app.reader.scroll_percent = Some(30);
+        let _ = app.update(AppMessage::Reader(Message::FontLarger));
+        assert!(app.settings_busy);
+        assert_eq!(app.reader.font_size, 24); // Unchanged until save succeeds.
+        let _ = app.update(AppMessage::Reader(Message::FontSmaller));
+        assert_eq!(app.reader.font_size, 24); // No overlapping writes.
+        let _ = app.update(AppMessage::SelectTheme(crate::ThemeChoice::Dark));
+        assert_eq!(app.theme_choice, crate::ThemeChoice::Nord);
+        let id = iced::window::Id::unique();
+        let _ = app.update(AppMessage::CloseRequested(id));
+        let _ = app.update(AppMessage::ConfirmClose);
+        assert_eq!(app.pending_close, Some(id));
+        let _ = app.update(AppMessage::ReaderFontSaved(Err("gagal".into())));
+        assert_eq!(app.reader.font_size, 24);
+        assert_eq!(app.settings_error.as_deref(), Some("gagal"));
+        let _ = app.update(AppMessage::CancelClose);
+        let _ = app.update(AppMessage::Reader(Message::FontSmaller));
+        assert!(app.settings_busy);
+        let _ = app.update(AppMessage::ReaderFontSaved(Ok(22)));
+        assert_eq!(app.reader.font_size, 22);
+        assert_eq!(app.reader.scroll_percent, None);
+        assert!(app.settings_error.is_none());
+        app.reader.busy = true;
+        let _ = app.update(AppMessage::Reader(Message::FontLarger));
+        assert!(!app.settings_busy);
+        app.reader.busy = false;
+        app.page = Page::Writer;
+        let _ = app.update(AppMessage::Reader(Message::FontLarger));
+        assert!(!app.settings_busy);
     }
 
     #[test]
@@ -1160,7 +1217,7 @@ mod tests {
         assert!(matches!(reader.markdown_items.first(), Some(markdown::Item::Heading(..))));
         assert!(reader.markdown_items.iter().any(|item| matches!(item, markdown::Item::List { .. })));
         for theme in [Theme::TokyoNight, Theme::Dark, Theme::Nord, Theme::Dracula] {
-            drop(reader.view(&theme));
+            drop(reader.view(&theme, true, ""));
         }
         assert!(!reader.show_source);
         let _ = reader.update(Message::ToggleSource);

@@ -107,9 +107,10 @@ enum Message {
     Navigate(Page),
     ToggleFocusMode,
     LoadSettings,
-    SettingsLoaded(Result<ThemeChoice, String>),
+    SettingsLoaded(Result<settings::Settings, String>),
     SelectTheme(ThemeChoice),
     SettingsSaved(Result<ThemeChoice, String>),
+    ReaderFontSaved(Result<u16, String>),
     Writer(writer::Message),
     Reader(reader::Message),
     Library(library::Message),
@@ -223,8 +224,9 @@ impl NovelCraft {
             Message::SettingsLoaded(result) => {
                 self.settings_busy = false;
                 match result {
-                    Ok(choice) => {
-                        self.theme_choice = choice;
+                    Ok(settings) => {
+                        self.theme_choice = settings.theme;
+                        self.reader.apply_font_size(settings.reader_font_size);
                         self.settings_loaded = true;
                         self.settings_error = None;
                     }
@@ -249,6 +251,26 @@ impl NovelCraft {
                     Err(error) => self.settings_error = Some(error),
                 }
                 Task::none()
+            }
+            Message::ReaderFontSaved(result) => {
+                self.settings_busy = false;
+                match result {
+                    Ok(size) => {
+                        self.reader.apply_font_size(size);
+                        self.settings_error = None;
+                    }
+                    Err(error) => self.settings_error = Some(error),
+                }
+                Task::none()
+            }
+            Message::Reader(message @ (reader::Message::FontSmaller | reader::Message::FontLarger)) => {
+                if self.page != Page::Reader || self.pending_close.is_some() || !self.settings_loaded || self.settings_busy {
+                    return Task::none();
+                }
+                let Some(size) = self.reader.requested_font_size(&message) else { return Task::none() };
+                self.settings_busy = true;
+                self.settings_error = None;
+                Task::perform(settings::save_reader_font_size(size), Message::ReaderFontSaved)
             }
             Message::Shortcut(shortcut) if self.pending_close.is_none() => {
                 use shortcuts::Shortcut;
@@ -394,7 +416,18 @@ impl NovelCraft {
         } else if self.page == Page::Writer {
             self.writer.view(&theme).map(Message::Writer)
         } else if self.page == Page::Reader {
-            self.reader.view(&theme).map(Message::Reader)
+            let status = if self.settings_busy {
+                "Memproses Settings..."
+            } else if self.settings_error.is_some() && !self.settings_loaded {
+                "Settings gagal dimuat; perbaiki dan muat ulang di Settings."
+            } else if self.settings_error.is_some() {
+                "Settings gagal disimpan; coba lagi atau lihat Settings."
+            } else if !self.settings_loaded {
+                "Settings belum dimuat."
+            } else {
+                "Ukuran font disimpan secara lokal."
+            };
+            self.reader.view(&theme, self.settings_loaded && !self.settings_busy, status).map(Message::Reader)
         } else {
             self.settings_view()
         };
@@ -553,7 +586,7 @@ mod tests {
     fn settings_saves_theme_without_discarding_writer_state() {
         let mut app = NovelCraft::default();
         make_draft_dirty(&mut app);
-        let _ = app.update(Message::SettingsLoaded(Ok(ThemeChoice::TokyoNight)));
+        let _ = app.update(Message::SettingsLoaded(Ok(settings::Settings::default())));
         let _ = app.update(Message::Navigate(Page::Settings));
         for (choice, expected) in [
             (ThemeChoice::Dark, Theme::Dark),
@@ -588,7 +621,7 @@ mod tests {
         assert!(!app.settings_busy);
         let _ = app.update(Message::LoadSettings);
         assert!(app.settings_busy);
-        let _ = app.update(Message::SettingsLoaded(Ok(ThemeChoice::Dark)));
+        let _ = app.update(Message::SettingsLoaded(Ok(settings::Settings { theme: ThemeChoice::Dark, ..settings::Settings::default() })));
         let _ = app.update(Message::SelectTheme(ThemeChoice::Nord));
         let _ = app.update(Message::SelectTheme(ThemeChoice::Dracula));
         assert!(app.settings_busy);
@@ -602,7 +635,7 @@ mod tests {
     #[test]
     fn close_waits_for_settings_write() {
         let mut app = NovelCraft::default();
-        let _ = app.update(Message::SettingsLoaded(Ok(ThemeChoice::TokyoNight)));
+        let _ = app.update(Message::SettingsLoaded(Ok(settings::Settings::default())));
         let _ = app.update(Message::Navigate(Page::Settings));
         let _ = app.update(Message::SelectTheme(ThemeChoice::Nord));
         let id = window::Id::unique();

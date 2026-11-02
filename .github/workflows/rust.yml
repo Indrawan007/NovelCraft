@@ -52,7 +52,13 @@ jobs:
           exec 3>&1 4>&2
           exec > "$RUNNER_TEMP/visual-step.log" 2>&1
           set -E
-          trap 'python3 -c "import pathlib,urllib.parse; p=pathlib.Path("$RUNNER_TEMP")/"visual-step.log"; print("::error title=Visual failure::"+urllib.parse.quote(p.read_text()[-5000:], safe=""))" >&3' ERR
+          on_error() {
+            diagnostic=$(tail -n 40 "$RUNNER_TEMP/visual-step.log" | tail -c 5000)
+            diagnostic=${diagnostic//'%'/'%25'}
+            diagnostic=${diagnostic//$'\n'/'%0A'}
+            printf '::error title=Visual failure::%s\n' "$diagnostic" >&3
+          }
+          trap on_error ERR
           sudo apt-get install -y xvfb xdotool imagemagick mesa-vulkan-drivers
           cargo build --locked
           export WINIT_UNIX_BACKEND=x11

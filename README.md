@@ -387,10 +387,26 @@ install -Dm644 packaging/novelcraft.svg "$data_home/icons/hicolor/scalable/apps/
 Perintah `install` mengganti file dengan nama yang sama. Pastikan `~/.local/bin`
 ada dalam `PATH` **sesi desktop** yang menjalankan launcher; jika tidak, menu
 mungkin muncul tetapi gagal menjalankan aplikasi. Segarkan menu atau masuk ulang
-jika entri belum muncul. Launcher tidak mendaftarkan asosiasi file dan belum
-mendukung membuka file lewat argumen; gunakan tombol Buka di aplikasi. Periksa
-instalasi lokal dengan `desktop-file-validate packaging/novelcraft.desktop`
-(paket `desktop-file-utils` di Arch). Portal Wayland tetap diperlukan untuk dialog
+jika entri belum muncul. Launcher mendeklarasikan dukungan EPUB, teks biasa,
+dan Markdown sehingga dapat ditawarkan dalam menu **Open With**; launcher tidak
+mengubah aplikasi default. Memilih satu file lokal membuka Reader dari awal,
+tanpa otomatis memulihkan penanda atau menambahkan file ke Library. Dukungan MIME
+dan pembaruan menu bergantung pada lingkungan desktop. Beberapa file atau URI
+jarak jauh tidak didukung.
+
+Dari terminal, satu path file juga dapat diberikan (path relatif dihitung dari
+direktori kerja):
+
+```bash
+cargo run --locked -- "buku.epub"
+```
+
+Hanya ekstensi EPUB, TXT, MD, dan Markdown yang diterima (tanpa membedakan huruf
+besar/kecil). Argumen tidak valid atau file gagal dibuka ditampilkan sebagai
+kesalahan di Reader; aplikasi tetap terbuka. Path tidak dikanonisasi, sehingga
+penanda tetap mengikuti aturan identitas path yang digunakan aplikasi. Periksa
+launcher dengan `desktop-file-validate packaging/novelcraft.desktop` (paket
+`desktop-file-utils` di Arch). Portal Wayland tetap diperlukan untuk dialog
 file. Aturan dan integrasi Hyprland belum tersedia.
 
 ---

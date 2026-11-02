@@ -8,6 +8,8 @@ mod writer;
 
 use iced::widget::{button, column, container, row, text, Column};
 use iced::{event, keyboard, window, Element, Length, Subscription, Task, Theme};
+use std::ffi::OsString;
+use std::path::PathBuf;
 
 fn main() -> iced::Result {
     iced::application("NovelCraft", NovelCraft::update, NovelCraft::view)
@@ -20,13 +22,39 @@ fn main() -> iced::Result {
         .subscription(NovelCraft::subscription)
         .run_with(|| {
             let mut app = NovelCraft::default();
+            let startup = startup_file(std::env::args_os().skip(1), std::env::current_dir());
+            let open = app.open_startup_file(startup);
             let task = Task::batch([
+                open,
                 app.library.update(library::Message::Load).map(Message::Library),
                 app.library.update(library::Message::RefreshBookmarks).map(Message::Library),
                 app.update(Message::LoadSettings),
             ]);
             (app, task)
         })
+}
+
+// Accept one local file path. Keep OS-native bytes and preserve the selected
+// path rather than canonicalizing it, as bookmarks are keyed by path.
+fn startup_file(args: impl IntoIterator<Item = OsString>, cwd: std::io::Result<PathBuf>) -> Result<Option<PathBuf>, String> {
+    let mut args = args.into_iter();
+    let Some(arg) = args.next() else { return Ok(None); };
+    if args.next().is_some() {
+        return Err("Pilih hanya satu file EPUB, TXT, atau Markdown saat membuka aplikasi.".into());
+    }
+    let path = PathBuf::from(arg);
+    let supported = path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| {
+        ["epub", "txt", "md", "markdown"].iter().any(|format| ext.eq_ignore_ascii_case(format))
+    });
+    if !supported {
+        return Err("Argumen harus berupa satu path file EPUB, TXT, atau Markdown lokal.".into());
+    }
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        cwd.map_err(|error| format!("Tidak dapat menentukan direktori kerja untuk path relatif: {error}"))?.join(path)
+    };
+    Ok(Some(absolute))
 }
 
 fn shortcut_event(event: iced::Event, status: event::Status, _: window::Id) -> Option<Message> {
@@ -137,6 +165,20 @@ struct NovelCraft {
 }
 
 impl NovelCraft {
+    fn open_startup_file(&mut self, file: Result<Option<PathBuf>, String>) -> Task<Message> {
+        match file {
+            Ok(None) => Task::none(),
+            Ok(Some(path)) => {
+                self.page = Page::Reader;
+                self.reader.open_path(path).map(|task| task.map(Message::Reader)).unwrap_or_else(Task::none)
+            }
+            Err(error) => {
+                self.page = Page::Reader;
+                self.reader.update(reader::Message::Opened(Err(error))).map(Message::Reader)
+            }
+        }
+    }
+
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
             window::close_requests().map(Message::CloseRequested),
@@ -664,6 +706,47 @@ mod tests {
         let _ = app.update(Message::SelectTheme(ThemeChoice::Dark));
         assert_eq!(app.theme_choice, ThemeChoice::TokyoNight);
         assert_eq!(app.pending_close, Some(id));
+    }
+
+    #[test]
+    fn startup_accepts_one_supported_local_path_and_resolves_relative_paths() {
+        let cwd = PathBuf::from("/workspace");
+        assert_eq!(startup_file(Vec::<OsString>::new(), Err(std::io::ErrorKind::NotFound.into())).unwrap(), None);
+        assert_eq!(startup_file(vec![OsString::from("books/My Novel.EPUB")], Ok(cwd.clone())).unwrap(), Some(cwd.join("books/My Novel.EPUB")));
+        for name in ["a.TXT", "a.md", "a.MARKDOWN"] {
+            let path = PathBuf::from("/books").join(name);
+            assert_eq!(startup_file(vec![path.clone().into_os_string()], Err(std::io::ErrorKind::NotFound.into())).unwrap(), Some(path));
+        }
+        assert!(startup_file(vec![OsString::from("draft.pdf")], Ok(cwd.clone())).is_err());
+        assert!(startup_file(vec![OsString::from("")], Ok(cwd.clone())).is_err());
+        assert!(startup_file(vec![OsString::from("first.txt"), OsString::from("second.txt")], Ok(cwd)).is_err());
+        assert!(startup_file(vec![OsString::from("relative.txt")], Err(std::io::ErrorKind::NotFound.into())).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_preserves_non_utf8_path_bytes() {
+        use std::os::unix::ffi::OsStringExt;
+        let file = OsString::from_vec(b"novel-\xff.txt".to_vec());
+        let expected = PathBuf::from("/books").join(&file);
+        assert_eq!(startup_file(vec![file], Ok(PathBuf::from("/books"))).unwrap(), Some(expected));
+    }
+
+    #[test]
+    fn startup_file_opens_reader_and_errors_do_not_exit_app() {
+        let mut app = NovelCraft::default();
+        let _ = app.open_startup_file(Ok(None));
+        assert_eq!(app.page, Page::Library);
+        assert!(!app.reader.is_busy());
+        let _ = app.open_startup_file(Err("Argumen tidak valid".into()));
+        assert_eq!(app.page, Page::Reader);
+        assert!(!app.reader.is_busy());
+        drop(app.view());
+        let mut app = NovelCraft::default();
+        let _ = app.open_startup_file(Ok(Some(PathBuf::from("/novel.txt"))));
+        assert_eq!(app.page, Page::Reader);
+        assert!(app.reader.is_busy());
+        assert!(app.file_operation_in_progress());
     }
 
     #[test]

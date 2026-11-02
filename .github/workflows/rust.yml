@@ -24,6 +24,7 @@ jobs:
       - name: Validate desktop entry and icon
         run: |
           desktop-file-validate packaging/novelcraft.desktop
+          python3 -c 'import configparser; c=configparser.ConfigParser(interpolation=None); c.read("packaging/novelcraft.desktop"); e=c["Desktop Entry"]; assert e["Exec"] == "novelcraft %f"; assert set(e["MimeType"].split(";")) >= {"application/epub+zip", "text/plain", "text/markdown"}'
           python3 -c 'import xml.etree.ElementTree as ET; assert ET.parse("packaging/novelcraft.svg").getroot().tag == "{http://www.w3.org/2000/svg}svg"'
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

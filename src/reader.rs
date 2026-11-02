@@ -772,6 +772,36 @@ async fn read_text(path: &Path) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn startup_open_uses_reader_without_restoring_bookmark() {
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("novelcraft-startup-{}-{unique}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("My book.TXT");
+        tokio::fs::write(&path, "Isi buku").await.unwrap();
+        let mut app = crate::NovelCraft::default();
+        let _ = app.open_startup_file(Ok(Some(path.clone())));
+        assert!(app.reader.busy);
+        let result = read_document(&path).await.map(|document| Some((path.clone(), document)));
+        let _ = app.update(crate::Message::Reader(Message::Opened(result)));
+        assert!(!app.reader.busy);
+        assert_eq!(app.reader.path.as_ref(), Some(&path));
+        assert_eq!(app.reader.sections, vec!["Isi buku"]);
+        assert!(app.reader.pending_scroll.is_none());
+        assert!(app.reader.bookmark_notice.is_none());
+        assert!(!app.library.is_busy());
+        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "Isi buku");
+        assert_eq!(app.page, crate::Page::Reader);
+        let _ = app.open_startup_file(Err("Argumen tidak valid".into()));
+        assert_eq!(app.reader.error.as_deref(), Some("Argumen tidak valid"));
+        let missing = dir.join("missing.txt");
+        let error = read_document(&missing).await.unwrap_err();
+        let _ = app.reader.update(Message::Opened(Err(error)));
+        assert!(app.reader.error.is_some());
+        assert_eq!(app.reader.path.as_ref(), Some(&path));
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
     #[test]
     fn deleting_bookmark_requires_confirmation_and_cancel_preserves_document() {
         let mut reader = Reader { path: Some("book.epub".into()), sections: vec!["satu".into(), "dua".into()], section: 1, is_epub: true, ..Reader::default() };

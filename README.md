@@ -158,9 +158,12 @@ melindungi dari penghentian paksa, crash, atau kehilangan daya. Dialog file
 Wayland memerlukan portal desktop yang berfungsi.
 
 **Karakter & dunia** di panel proyek membuka catatan karakter, tempat, waktu,
-dan lore. Catatan memiliki nama dan deskripsi; karakter juga memiliki kolom
-relasi berupa teks bebas (belum berupa relasi antar-entri). Tambah, pilih, edit,
-simpan, dan hapus dengan konfirmasi. Kolom saat ini satu baris. Simpan atau
+dan lore. Catatan memiliki nama dan deskripsi. Karakter memiliki catatan relasi
+teks bebas dan dapat dihubungkan ke karakter lain dengan label relasi berarah;
+relasi masuk dan keluar ditampilkan pada kedua karakter. Tambah, pilih, edit,
+simpan, dan hapus dengan konfirmasi. Menghapus karakter juga menghapus semua
+relasi terstrukturnya setelah konfirmasi; karakter lain tidak dihapus. Menghapus
+relasi tidak menghapus karakter. Kolom saat ini satu baris. Simpan atau
 batalkan perubahan catatan sebelum mengganti proyek atau membuat draft baru;
 penutupan jendela juga memperingatkan tentang perubahan catatan yang belum disimpan.
 
@@ -197,9 +200,11 @@ peringatan muncul saat kegagalan terdeteksi. Target yang sedang diedit harus
 disimpan atau dibatalkan sebelum mengganti proyek. Target yang diubah instance
 lain ditolak dan harus dimuat ulang setelah pembatalan edit.
 
-Database catatan versi 1 ditingkatkan ke versi 2 secara transaksional saat pertama
-dibuka; catatan lama dipertahankan. Versi aplikasi lama yang hanya mendukung versi
-1 tidak bisa membaca versi 2. Buat backup sebelum memperbarui aplikasi.
+Database proyek versi 1 atau 2 ditingkatkan ke versi 3 secara transaksional saat
+pertama dibuka; catatan dan statistik lama dipertahankan. Teks relasi lama tetap
+sebagai teks bebas dan tidak otomatis menjadi hubungan terstruktur. Versi aplikasi
+lama yang hanya mendukung database versi 1 atau 2 tidak bisa membaca versi 3.
+Buat backup sebelum memperbarui aplikasi.
 
 **Mode Zen** di Writer menyembunyikan navigasi, panel chapter, dan toolbar,
 serta meminta fullscreen. **Keluar Zen** mengembalikan tampilan dan hanya
@@ -549,7 +554,7 @@ file. Aturan dan integrasi Hyprland belum tersedia.
 ### Phase 2 — Novel Writing Suite *(target: v0.3)*
 > Fitur khusus untuk menulis novel secara serius.
 - [ ] Chapter management lengkap (operasi daftar dan penambahan file lokal tersedia; tree view dan drag & drop belum)
-- [ ] Character database lengkap (nama, deskripsi dan relasi teks bebas sudah tersedia; relasi terstruktur belum)
+- [x] Database karakter dasar: nama, deskripsi, relasi teks dan hubungan berarah antar-karakter
 - [x] World-building notes dasar: tempat, waktu, lore (catatan teks satu baris)
 - [x] Target kata harian per proyek (berdasarkan perubahan bersih chapter tersimpan)
 - [x] Writing streak berdasarkan hari aktif dan daftar kalender 31 hari

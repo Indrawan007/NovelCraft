@@ -611,19 +611,40 @@ impl Writer {
     }
 
     pub fn zen_view<'a>(&'a self, theme: &Theme) -> Element<'a, Message> {
-        // Show normal controls whenever a confirmation, operation or error needs attention.
-        if self.controls_blocked() || self.error.is_some() || self.activity_notice.is_some() {
+        // Keep confirmation controls available, but never reveal the normal sidebar
+        // merely because a background save or another operation is in progress.
+        if self.pending_discard.is_some()
+            || self.pending_format_save.is_some()
+            || self.pending_overwrite.is_some()
+            || self.pending_autosave_confirmation
+            || self.pending_chapter_rename.is_some()
+            || self.pending_chapter_remove.is_some()
+        {
             return self.view(theme);
         }
-        let editor = text_editor(&self.content)
+
+        let mut editor = text_editor(&self.content)
             .height(Length::Fill)
+            .size(19)
+            .line_height(iced::widget::text::LineHeight::Relative(1.7))
+            .padding([52, 40])
+            .style(crate::mockup_style::writer_editor)
             .highlight(self.syntax_token(), highlighter::Theme::Base16Ocean)
-            .key_binding(editor_key_binding)
-            .on_action(Message::Edit);
-        column![
-            editor,
-            text(format!("{} kata{}", self.word_count, if self.dirty { " · belum disimpan" } else { "" })).size(12),
-        ].spacing(8).height(Length::Fill).into()
+            .key_binding(editor_key_binding);
+        if !self.controls_blocked() {
+            editor = editor.on_action(Message::Edit);
+        }
+
+        let canvas = container(editor).width(Length::Fill).height(Length::Fill).max_width(920);
+        let canvas = container(canvas).width(Length::Fill).height(Length::Fill).center_x(Length::Fill);
+        let mut content = iced::widget::Column::new().spacing(8).height(Length::Fill);
+        if let Some(error) = &self.error {
+            content = content.push(text(error).size(12).color(theme.palette().danger));
+        }
+        if let Some(notice) = &self.activity_notice {
+            content = content.push(text(notice).size(12).color(mockup_style::muted(theme)));
+        }
+        content.push(canvas).into()
     }
 
     pub fn view<'a>(&'a self, theme: &Theme) -> Element<'a, Message> {

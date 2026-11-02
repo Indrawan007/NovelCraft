@@ -75,6 +75,11 @@ fn shortcut_event(event: iced::Event, status: event::Status, _: window::Id) -> O
         return None;
     }
     if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
+        if key.as_ref() == &keyboard::Key::Named(keyboard::key::Named::Escape)
+            && modifiers == keyboard::Modifiers::empty()
+        {
+            return Some(Message::ExitZen);
+        }
         return shortcuts::from_key(key.as_ref(), modifiers).map(Message::Shortcut);
     }
     None
@@ -626,10 +631,20 @@ impl NovelCraft {
 
         let theme = self.theme_choice.iced_theme();
         if self.zen_mode && self.page == Page::Writer {
-            let mut bar = row![button("Keluar Zen").on_press(Message::ExitZen), horizontal_space()].spacing(12);
-            if let Some(notice) = &self.fullscreen_notice { bar = bar.push(text(notice).size(12)); }
-            return container(column![bar, self.writer.zen_view(&theme).map(Message::Writer)].spacing(12))
-                .width(Length::Fill).height(Length::Fill).padding(32).into();
+            let editor = self.writer.zen_view(&theme).map(Message::Writer);
+            let content: Element<'_, Message> = if let Some(notice) = &self.fullscreen_notice {
+                column![
+                    container(text(notice).size(12).color(mockup_style::muted(&theme)))
+                        .width(Length::Fill).padding([8, 16]),
+                    editor,
+                ]
+                .spacing(8)
+                .height(Length::Fill)
+                .into()
+            } else {
+                editor
+            };
+            return container(content).width(Length::Fill).height(Length::Fill).into();
         }
         let is_workspace = matches!(self.page, Page::Writer | Page::Reader);
         let compact = match self.page {
@@ -1022,6 +1037,21 @@ mod tests {
         let id = window::Id::unique();
         assert!(matches!(shortcut_event(pressed.clone(), event::Status::Ignored, id), Some(Message::Shortcut(shortcuts::Shortcut::Save))));
         assert!(shortcut_event(pressed, event::Status::Captured, id).is_none());
+    }
+
+    #[test]
+    fn unmodified_escape_exits_zen_mode() {
+        use keyboard::key::{NativeCode, Physical};
+        let pressed = iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            modified_key: keyboard::Key::Named(keyboard::key::Named::Escape),
+            physical_key: Physical::Unidentified(NativeCode::Unidentified),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+            text: None,
+        });
+        let id = window::Id::unique();
+        assert!(matches!(shortcut_event(pressed, event::Status::Ignored, id), Some(Message::ExitZen)));
     }
 
     #[test]

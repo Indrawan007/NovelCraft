@@ -174,8 +174,8 @@ edit atau hapus yang sudah usang ditolak, lalu batalkan edit dan muat ulang.
 Membuka atau menulis catatan berjalan di worker. Jika pembuatan database gagal,
 file kosong atau belum lengkap dapat tertinggal dan perlu diperiksa. Simpan backup
 folder proyek; jangan memindahkan database ketika aplikasi sedang membukanya.
-Chapter tetap file Markdown dan daftar chapter tetap `.novelcraft.json`; Library
-masih JSON, jadi migrasi semua metadata ke SQLite belum selesai. Pemeriksaan path bukan penguncian filesystem dan tidak menutup semua race.
+Chapter tetap file Markdown dan daftar chapter tetap `.novelcraft.json`, jadi
+migrasi semua metadata ke SQLite belum selesai. Pemeriksaan path bukan penguncian filesystem dan tidak menutup semua race.
 
 **Target & streak** di panel proyek menyimpan target harian opsional dan
 menampilkan daftar kalender 31 hari terakhir. Jumlah harian adalah perubahan
@@ -248,8 +248,8 @@ ditulis, termasuk jumlah pemisah di akhir. Perbedaannya dapat berasal dari edit
 pengguna maupun normalisasi, sehingga bukan diff isi. Periksa hasil simpan dan
 gunakan backup bila format baris penting.
 
-Library menyimpan lokasi file di `$XDG_DATA_HOME/novelcraft/library.json`, atau
-`~/.local/share/novelcraft/library.json` jika `XDG_DATA_HOME` tidak ditetapkan
+Library menyimpan lokasi file di `$XDG_DATA_HOME/novelcraft/library.sqlite3`, atau
+`~/.local/share/novelcraft/library.sqlite3` jika `XDG_DATA_HOME` tidak ditetapkan
 sebagai path absolut. File asli tidak dipindahkan atau dihapus. Jika file asli
 pindah, gunakan **Ubah lokasi** pada kartu untuk memilih file baru lalu
 konfirmasikan perubahan. Hanya daftar lokasi yang berubah; file tidak dipindahkan,
@@ -280,13 +280,25 @@ Urutan dan filter hanya berlaku selama sesi dan tidak mengubah data Library.
 **Hapus dari daftar** meminta
 konfirmasi dan hanya menghapus entri Library, bukan file maupun penanda. Jika
 data Library memuat beberapa entri dengan path identik, semuanya dihapus setelah
-peringatan dan konfirmasi. Library menolak menimpa daftar yang berubah sejak dimuat; gunakan **Muat ulang Library** sebelum
-mencoba menambahkan atau menghapus entri lagi. File Library yang rusak, bukan
-file biasa, atau berupa symbolic link ditolak tanpa diganti. Pada Linux, daftar
-baru ditulis dengan izin privat (maksimal 0600, sesuai umask); ACL dan atribut
-tambahan tidak dipertahankan.
-Pemeriksaan konflik tidak mengunci file: perubahan setelah pemeriksaan terakhir
-masih bisa terlewat. Hindari beberapa instance dan tetap buat backup.
+peringatan dan konfirmasi. Library menolak perubahan yang memakai revisi atau isi
+lama; gunakan **Muat ulang Library** sebelum mencoba lagi. Pada akses pertama,
+`library.json` lama divalidasi dan diimpor ke SQLite secara transaksional tanpa
+dihapus atau ditimpa. Urutan dan entri duplikat lama tetap dipertahankan.
+
+**Cadangkan `library.json` dan `library.sqlite3` sebelum upgrade atau downgrade.**
+Versi lama hanya membaca JSON dan tidak melihat perubahan di SQLite. Jika JSON
+lama dibuat, diubah, dihapus, atau menjadi symbolic link setelah migrasi, Library
+menolak dimuat/disimpan; bandingkan salinan dan pulihkan JSON ke isi saat migrasi
+setelah membuat cadangan. Tidak ada penggabungan otomatis; snapshot JSON asli juga
+tersimpan di database. Data rusak, database asing/versi tidak didukung, dan
+symbolic link ditolak. Jika inisialisasi database gagal, file kosong atau belum
+lengkap dapat tertinggal dan perlu diperiksa. Jika database hilang, pemuatan ulang
+membuat database baru dari JSON lama (atau kosong), bukan memulihkan perubahan
+terakhir: gunakan backup untuk memulihkannya. Penulisan yang memakai snapshot lama
+ditolak jika database diganti. Database baru memakai izin 0600 di Unix. Pemeriksaan
+JSON tidak mengunci filesystem, dan dua proses yang menginisialisasi bersamaan
+dapat menyebabkan salah satunya gagal; coba ulang setelah proses pertama selesai.
+Hindari menjalankan versi lama bersamaan dan tetap buat backup.
 
 Penanda Reader disimpan di `novelcraft/bookmarks.sqlite3` pada direktori data yang
 sama. Satu posisi disimpan per path file; memindahkan file membuatnya dianggap
@@ -580,7 +592,7 @@ file. Aturan dan integrasi Hyprland belum tersedia.
 - [x] Writing streak berdasarkan hari aktif dan daftar kalender 31 hari
 - [x] Mode Zen Writer: editor minimal dan fullscreen dengan pemulihan mode sebelumnya (bergantung compositor)
 - [x] Auto-save setiap 30 detik untuk file bernama (opt-in per file; tanpa pemulihan draft tanpa nama)
-- [ ] SQLite storage untuk semua metadata (baru karakter dan catatan world-building; metadata lama masih JSON)
+- [ ] SQLite storage untuk semua metadata (daftar chapter masih JSON)
 
 ### Phase 3 — Advanced Reader *(target: v0.5)*
 > Pengalaman membaca yang lebih baik.

@@ -3,8 +3,9 @@ use iced::widget::{button, column, container, progress_bar, row, scrollable, tex
 use iced::{Element, Length, Task, Theme};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::io::AsyncWriteExt;
+use rusqlite::{params, Connection, OpenFlags, TransactionBehavior};
+use std::sync::Mutex;
+use std::time::Duration;
 
 #[derive(Default)]
 pub struct Library {
@@ -294,9 +295,9 @@ impl Library {
         if !self.controls_blocked() {
             new_draft = new_draft.on_press(Message::NewDraft);
         }
-        if self.loaded && !self.controls_blocked() {
-            import = import.on_press(Message::Import);
-            reload = reload.on_press(Message::Reload);
+        if !self.controls_blocked() {
+            reload = reload.on_press(if self.loaded { Message::Reload } else { Message::Load });
+            if self.loaded { import = import.on_press(Message::Import); }
         }
         let mut search = text_input("Cari nama file...", &self.query).size(13).padding([9, 14]).width(Length::Fill).style(crate::mockup_style::search);
         if !self.controls_blocked() { search = search.on_input(Message::Search); }
@@ -516,28 +517,92 @@ async fn load() -> Result<(Vec<PathBuf>, Option<Vec<u8>>), String> {
     load_from(&library_path()?).await
 }
 
-async fn read_snapshot(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
-    match tokio::fs::symlink_metadata(path).await {
-        Ok(metadata) if !metadata.is_file() || metadata.file_type().is_symlink() => {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput,
-                "Library harus berupa file biasa, bukan symbolic link"));
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
+const LIBRARY_DB: &str = "library.sqlite3";
+const LIBRARY_APP_ID: i64 = 1313030732;
+
+fn legacy_snapshot(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() =>
+            Err("Library JSON harus berupa file biasa, bukan symbolic link.".into()),
+        Ok(_) => std::fs::read(path).map(Some).map_err(|e| format!("Gagal membaca Library JSON: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("Gagal membaca Library JSON: {e}")),
     }
-    tokio::fs::read(path).await.map(Some)
+}
+
+// Snapshots combine database identity, revision and contents. The revision detects
+// changes made through the app even if the list is later changed back.
+fn database_operation(path: &Path, replacement: Option<(&[PathBuf], &[u8])>) -> Result<(Vec<PathBuf>, Vec<u8>), String> {
+    static INITIALIZATION: Mutex<()> = Mutex::new(());
+    let _guard = INITIALIZATION.lock().map_err(|_| "Proses database Library gagal; mulai ulang aplikasi.")?;
+    let replacement_data = replacement.map(|(books, _)| serde_json::to_string(books)
+        .map_err(|e| format!("Gagal menyiapkan data Library: {e}"))).transpose()?;
+    let dir = path.parent().ok_or("Lokasi Library tidak valid.")?;
+    let original = legacy_snapshot(path)?;
+    if let Some(bytes) = &original {
+        serde_json::from_slice::<Vec<PathBuf>>(bytes).map_err(|e| format!("Data Library tidak valid; file asli tidak diubah: {e}"))?;
+    }
+    std::fs::create_dir_all(dir).map_err(|e| format!("Gagal membuat folder Library: {e}"))?;
+    let db_path = dir.join(LIBRARY_DB);
+    let created = if replacement.is_some() {
+        // A stale save must never recreate a database that disappeared after load.
+        false
+    } else {
+        let mut options = std::fs::OpenOptions::new(); options.write(true).create_new(true);
+        #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
+        match options.open(&db_path) {
+            Ok(file) => { drop(file); true },
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(e) => return Err(format!("Gagal membuat database Library: {e}")),
+        }
+    };
+    let meta = std::fs::symlink_metadata(&db_path).map_err(|e| format!("Gagal memeriksa database Library: {e}"))?;
+    if !meta.is_file() || meta.file_type().is_symlink() { return Err("Database Library harus berupa file biasa, bukan symbolic link.".into()); }
+    let mut db = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .map_err(|e| format!("Gagal membuka database Library: {e}"))?;
+    db.busy_timeout(Duration::from_secs(3)).map_err(|e| e.to_string())?;
+    if !created {
+        let app: i64 = db.query_row("PRAGMA application_id", [], |r| r.get(0)).map_err(|e| format!("Database Library tidak valid: {e}"))?;
+        let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(|e| format!("Database Library tidak valid: {e}"))?;
+        if app != LIBRARY_APP_ID || version != 1 { return Err("Database Library bukan milik NovelCraft atau versinya tidak didukung; file tidak diubah.".into()); }
+    }
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| format!("Gagal membuka transaksi Library: {e}"))?;
+    if created {
+        tx.execute_batch(&format!("PRAGMA application_id={LIBRARY_APP_ID}; PRAGMA user_version=1; CREATE TABLE library (id INTEGER PRIMARY KEY CHECK(id=1), identity BLOB NOT NULL, revision INTEGER NOT NULL, data TEXT NOT NULL, legacy BLOB);"))
+            .map_err(|e| format!("Gagal menyiapkan database Library: {e}"))?;
+        let data = std::str::from_utf8(original.as_deref().unwrap_or(b"[]")).map_err(|e| format!("Data Library tidak valid: {e}"))?;
+        tx.execute("INSERT INTO library(id,identity,revision,data,legacy) VALUES(1,randomblob(16),1,?1,?2)", params![data, original])
+            .map_err(|e| format!("Gagal memigrasikan Library: {e}"))?;
+    }
+    let (identity, mut revision, data, expected_legacy): (Vec<u8>, i64, String, Option<Vec<u8>>) =
+        tx.query_row("SELECT identity,revision,data,legacy FROM library WHERE id=1", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map_err(|e| format!("Gagal membaca database Library: {e}"))?;
+    if identity.len() != 16 || revision < 1 { return Err("Identitas atau revisi Library tidak valid.".into()); }
+    if legacy_snapshot(path)? != expected_legacy {
+        return Err("Library JSON lama berubah setelah migrasi; perubahan tidak digabung otomatis. Pulihkan atau bandingkan cadangan sebelum melanjutkan.".into());
+    }
+    let mut books: Vec<PathBuf> = serde_json::from_str(&data).map_err(|e| format!("Data Library tidak valid: {e}"))?;
+    let mut token = identity;
+    token.extend_from_slice(&revision.to_be_bytes());
+    token.extend_from_slice(data.as_bytes());
+    if let Some((new_books, expected)) = replacement {
+        if token != expected { return Err("Library berubah di luar aplikasi; muat ulang Library sebelum mencoba lagi.".into()); }
+        revision = revision.checked_add(1).ok_or("Revisi Library habis.")?;
+        let new_data = replacement_data.as_ref().ok_or("Data Library tidak tersedia.")?;
+        tx.execute("UPDATE library SET data=?1,revision=?2 WHERE id=1", params![new_data, revision])
+            .map_err(|e| format!("Gagal menyimpan Library: {e}"))?;
+        books = new_books.to_vec();
+        token.truncate(16); token.extend_from_slice(&revision.to_be_bytes()); token.extend_from_slice(new_data.as_bytes());
+    }
+    tx.commit().map_err(|e| format!("Gagal menyimpan Library: {e}"))?;
+    Ok((books, token))
 }
 
 async fn load_from(path: &Path) -> Result<(Vec<PathBuf>, Option<Vec<u8>>), String> {
-    let snapshot = read_snapshot(path).await
-        .map_err(|error| format!("Gagal memuat Library; file asli tidak diubah: {error}"))?;
-    let books = match &snapshot {
-        Some(bytes) => serde_json::from_slice(bytes)
-            .map_err(|error| format!("Data Library tidak valid; file asli tidak diubah: {error}"))?,
-        None => Vec::new(),
-    };
-    Ok((books, snapshot))
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || database_operation(&path, None)).await
+        .map_err(|e| format!("Proses database Library gagal: {e}"))?
+        .map(|(books, token)| (books, Some(token)))
 }
 
 async fn pick_book() -> Result<Option<PathBuf>, String> {
@@ -602,49 +667,13 @@ async fn save(books: Vec<PathBuf>, expected: Option<Vec<u8>>) -> Result<(Vec<Pat
     Ok((books, snapshot))
 }
 
-// Write a temporary file in the same directory, checking the loaded snapshot
-// both before starting and immediately before replacing the list.
 async fn save_to(path: &Path, books: &[PathBuf], expected: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
-    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
-    check_snapshot(path, &expected).await?;
-    let bytes = serde_json::to_vec_pretty(books)
-        .map_err(|error| format!("Gagal menyiapkan data Library: {error}"))?;
-    let dir = path.parent().ok_or_else(|| "Lokasi Library tidak valid.".to_owned())?;
-    tokio::fs::create_dir_all(dir).await
-        .map_err(|error| format!("Gagal membuat folder Library: {error}"))?;
-    let (temp, mut file) = loop {
-        let temp = dir.join(format!(".library-{}-{}.tmp", std::process::id(), NEXT_TEMP.fetch_add(1, Ordering::Relaxed)));
-        let mut options = tokio::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        options.mode(0o600);
-        match options.open(&temp).await {
-            Ok(file) => break (temp, file),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(format!("Gagal membuat file sementara Library: {error}")),
-        }
-    };
-    let result: Result<(), String> = async {
-        file.write_all(&bytes).await.map_err(|error| format!("Gagal menulis Library: {error}"))?;
-        file.sync_all().await.map_err(|error| format!("Gagal menyimpan Library: {error}"))?;
-        drop(file);
-        check_snapshot(path, &expected).await?;
-        tokio::fs::rename(&temp, path).await.map_err(|error| format!("Gagal mengganti Library: {error}"))
-    }.await;
-    if let Err(error) = result {
-        let _ = tokio::fs::remove_file(&temp).await;
-        return Err(error);
-    }
-    Ok(bytes)
-}
-
-async fn check_snapshot(path: &Path, expected: &Option<Vec<u8>>) -> Result<(), String> {
-    let current = read_snapshot(path).await
-        .map_err(|error| format!("Gagal memeriksa Library; file asli tidak diubah: {error}"))?;
-    if &current != expected {
-        return Err("Library berubah di luar aplikasi; muat ulang Library sebelum mencoba lagi.".into());
-    }
-    Ok(())
+    let expected = expected.ok_or("Library belum dimuat; muat ulang sebelum menyimpan.")?;
+    let path = path.to_owned();
+    let books = books.to_vec();
+    tokio::task::spawn_blocking(move || database_operation(&path, Some((&books, &expected)))).await
+        .map_err(|e| format!("Proses database Library gagal: {e}"))?
+        .map(|(_, token)| token)
 }
 
 #[cfg(test)]
@@ -817,25 +846,6 @@ mod tests {
         assert!(library.missing_only);
     }
 
-    #[tokio::test]
-    async fn view_controls_do_not_write_library_or_change_book_files() {
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("novelcraft-library-view-{}-{unique}", std::process::id()));
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        let file = dir.join("book.txt");
-        let storage = dir.join("library.json");
-        tokio::fs::write(&file, b"konten").await.unwrap();
-        let snapshot = save_to(&storage, &[file.clone()], None).await.unwrap();
-        let mut library = Library { books: vec![file.clone()], loaded: true, snapshot: Some(snapshot.clone()), ..Library::default() };
-        let _ = library.update(Message::Search("book".into()));
-        let _ = library.update(Message::CycleSort);
-        let _ = library.update(Message::ToggleMissingOnly);
-        assert_eq!(tokio::fs::read(&storage).await.unwrap(), snapshot);
-        assert_eq!(tokio::fs::read(&file).await.unwrap(), b"konten".to_vec());
-        assert_eq!(library.books, vec![file]);
-        assert!(!library.busy);
-        tokio::fs::remove_dir_all(dir).await.unwrap();
-    }
 
     #[test]
     fn search_matches_filename_without_case_sensitivity() {
@@ -948,6 +958,8 @@ mod tests {
         let _ = library.update(Message::Import);
         assert!(!library.busy);
         assert_eq!(library.error.as_deref(), Some("rusak"));
+        let _ = library.update(Message::Load);
+        assert!(library.busy);
     }
 
     #[test]
@@ -1039,53 +1051,6 @@ mod tests {
         assert!(library.books.is_empty());
     }
 
-    #[tokio::test]
-    async fn removing_entry_keeps_book_and_bookmark_and_detects_library_conflicts() {
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("novelcraft-library-remove-{}-{unique}", std::process::id()));
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        let storage = dir.join("library.json");
-        let bookmarks = dir.join("bookmarks.json");
-        let book = dir.join("novel.txt");
-        let other = dir.join("other.txt");
-        let saved_bookmark = Bookmark { path: book.clone(), section: 0, section_count: None, scroll_percent: Some(35), markdown_source: false };
-        let bookmark_bytes = serde_json::to_vec(&vec![saved_bookmark.clone()]).unwrap();
-        tokio::fs::write(&book, b"isi buku").await.unwrap();
-        tokio::fs::write(&bookmarks, &bookmark_bytes).await.unwrap();
-        let initial = vec![book.clone(), other.clone()];
-        let snapshot = save_to(&storage, &initial, None).await.unwrap();
-        let mut library = Library { books: initial.clone(), snapshot: Some(snapshot.clone()), loaded: true,
-            bookmarks: Some(vec![saved_bookmark]), ..Library::default() };
-        let _ = library.update(Message::Remove(book.clone()));
-        let _ = library.update(Message::CancelRemove);
-        assert_eq!(tokio::fs::read(&storage).await.unwrap(), snapshot);
-        assert_eq!(tokio::fs::read(&book).await.unwrap(), b"isi buku".to_vec());
-        assert_eq!(tokio::fs::read(&bookmarks).await.unwrap(), bookmark_bytes);
-        let _ = library.update(Message::Remove(book.clone()));
-        let _ = library.update(Message::ConfirmRemove);
-        let external = b"[\"/external.txt\"]";
-        tokio::fs::write(&storage, external).await.unwrap();
-        let remaining = without_book(&library.books, &book);
-        assert_eq!(remaining, vec![other.clone()]);
-        let result = save_to(&storage, &remaining, Some(snapshot.clone())).await.map(|bytes| (remaining.clone(), bytes));
-        let _ = library.update(Message::Saved(result));
-        assert_eq!(library.books, initial);
-        assert_eq!(library.snapshot.as_deref(), Some(snapshot.as_slice()));
-        assert_eq!(tokio::fs::read(&storage).await.unwrap(), external.to_vec());
-        assert!(library.error.is_some());
-        // After reloading the matching snapshot, a confirmed removal can succeed.
-        let snapshot = save_to(&storage, &initial, Some(external.to_vec())).await.unwrap();
-        let _ = library.update(Message::Loaded(Ok((initial, Some(snapshot.clone())))));
-        let _ = library.update(Message::Remove(book.clone()));
-        let _ = library.update(Message::ConfirmRemove);
-        let result = save_to(&storage, &remaining, Some(snapshot)).await.map(|bytes| (remaining.clone(), bytes));
-        let _ = library.update(Message::Saved(result));
-        assert_eq!(library.books, vec![other]);
-        assert_eq!(load_from(&storage).await.unwrap().0, remaining);
-        assert_eq!(tokio::fs::read(&book).await.unwrap(), b"isi buku".to_vec());
-        assert_eq!(tokio::fs::read(&bookmarks).await.unwrap(), bookmark_bytes);
-        tokio::fs::remove_dir_all(dir).await.unwrap();
-    }
 
     #[test]
     fn relink_requires_confirmation_and_cancellation_preserves_state() {
@@ -1163,39 +1128,6 @@ mod tests {
         assert!(!app.reader.is_busy());
     }
 
-    #[tokio::test]
-    async fn relink_checks_target_and_conflict_without_changing_files_or_bookmarks() {
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("novelcraft-library-relink-{}-{unique}", std::process::id()));
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        let storage = dir.join("library.json");
-        let bookmarks = dir.join("bookmarks.json");
-        let old = dir.join("old.txt");
-        let new = dir.join("new.txt");
-        tokio::fs::write(&old, b"old contents").await.unwrap();
-        tokio::fs::write(&new, b"new contents").await.unwrap();
-        tokio::fs::write(&bookmarks, b"existing bookmark data").await.unwrap();
-        let initial = vec![old.clone()];
-        let snapshot = save_to(&storage, &initial, None).await.unwrap();
-        let updated = replace_book(&initial, &old, &new).unwrap();
-        assert!(validate_relink_target(&dir).await.is_err());
-        assert!(validate_relink_target(&dir.join("missing.txt")).await.is_err());
-        tokio::fs::write(&storage, b"[\"/external.txt\"]").await.unwrap();
-        assert!(save_relinked_to(&storage, updated.clone(), Some(snapshot), &new).await.is_err());
-        assert_eq!(tokio::fs::read(&storage).await.unwrap(), b"[\"/external.txt\"]".to_vec());
-        let current = tokio::fs::read(&storage).await.unwrap();
-        tokio::fs::remove_file(&new).await.unwrap();
-        assert!(save_relinked_to(&storage, updated.clone(), Some(current.clone()), &new).await.is_err());
-        assert_eq!(tokio::fs::read(&storage).await.unwrap(), current);
-        tokio::fs::write(&new, b"new contents").await.unwrap();
-        let (saved, _) = save_relinked_to(&storage, updated.clone(), Some(current), &new).await.unwrap();
-        assert_eq!(saved, updated);
-        assert_eq!(load_from(&storage).await.unwrap().0, updated);
-        assert_eq!(tokio::fs::read(&old).await.unwrap(), b"old contents".to_vec());
-        assert_eq!(tokio::fs::read(&new).await.unwrap(), b"new contents".to_vec());
-        assert_eq!(tokio::fs::read(&bookmarks).await.unwrap(), b"existing bookmark data".to_vec());
-        tokio::fs::remove_dir_all(dir).await.unwrap();
-    }
 
     #[test]
     fn failed_save_keeps_original_list() {
@@ -1233,113 +1165,130 @@ mod tests {
         assert!(library.error.is_none());
     }
 
+    fn test_storage(name: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        std::env::temp_dir().join(format!("novelcraft-library-db-{name}-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed))).join("library.json")
+    }
+    fn clean_storage(path: &Path) { std::fs::remove_dir_all(path.parent().unwrap()).unwrap(); }
+
     #[tokio::test]
-    async fn external_changes_are_not_overwritten_and_can_be_reloaded() {
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("novelcraft-library-conflict-{}-{unique}", std::process::id()));
-        let path = dir.join("library.json");
-        let initial = vec![PathBuf::from("/first.txt")];
-        save_to(&path, &initial, None).await.unwrap();
-        let (_, snapshot) = load_from(&path).await.unwrap();
-        let external = br#"["/external.txt"]"#;
-        tokio::fs::write(&path, external).await.unwrap();
-        assert!(save_to(&path, &[PathBuf::from("/other.txt")], snapshot).await.is_err());
-        assert_eq!(tokio::fs::read(&path).await.unwrap(), external.to_vec());
-        let (reloaded, current) = load_from(&path).await.unwrap();
-        assert_eq!(reloaded, vec![PathBuf::from("/external.txt")]);
-        let replacement = vec![PathBuf::from("/new.txt")];
-        save_to(&path, &replacement, current).await.unwrap();
-        assert_eq!(load_from(&path).await.unwrap().0, replacement);
-        tokio::fs::remove_dir_all(dir).await.unwrap();
+    async fn migration_round_trips_order_and_does_not_touch_legacy_or_books() {
+        let path = test_storage("migrate"); std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let old = path.parent().unwrap().join("old.txt"); let new = path.parent().unwrap().join("new.txt");
+        std::fs::write(&old, b"old").unwrap(); std::fs::write(&new, b"new").unwrap();
+        let initial = vec![old.clone(), old.clone(), new.clone()];
+        let original = serde_json::to_vec_pretty(&initial).unwrap(); std::fs::write(&path, &original).unwrap();
+        let (books, token) = load_from(&path).await.unwrap(); assert_eq!(books, initial);
+        let remaining = without_book(&books, &old); assert_eq!(remaining, vec![new.clone()]);
+        let token = save_to(&path, &remaining, token).await.unwrap();
+        let (books, current) = load_from(&path).await.unwrap(); assert_eq!(books, remaining); assert_eq!(current, Some(token));
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(std::fs::read(old).unwrap(), b"old"); assert_eq!(std::fs::read(new).unwrap(), b"new"); clean_storage(&path);
     }
 
     #[tokio::test]
-    async fn corrupt_external_change_is_not_overwritten() {
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("novelcraft-library-corrupt-{}-{unique}", std::process::id()));
-        let path = dir.join("library.json");
-        save_to(&path, &[PathBuf::from("/old.txt")], None).await.unwrap();
-        let (_, snapshot) = load_from(&path).await.unwrap();
-        tokio::fs::write(&path, b"not json").await.unwrap();
-        assert!(save_to(&path, &[PathBuf::from("/new.txt")], snapshot).await.is_err());
-        assert!(load_from(&path).await.is_err());
-        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"not json".to_vec());
-        tokio::fs::remove_dir_all(dir).await.unwrap();
+    async fn stale_revisions_and_database_replacement_do_not_overwrite() {
+        let path = test_storage("conflict");
+        let (_, initial) = load_from(&path).await.unwrap();
+        let initial = initial.unwrap(); let a = vec![PathBuf::from("/a")]; let b = vec![PathBuf::from("/b")];
+        let changed = save_to(&path, &a, Some(initial.clone())).await.unwrap();
+        assert!(save_to(&path, &b, Some(initial.clone())).await.is_err());
+        let _ = save_to(&path, &[], Some(changed)).await.unwrap();
+        assert!(save_to(&path, &b, Some(initial.clone())).await.is_err()); // ABA
+        let (_, before_external) = load_from(&path).await.unwrap();
+        let db = Connection::open(path.parent().unwrap().join(LIBRARY_DB)).unwrap();
+        db.execute("UPDATE library SET data='[\"/external\"]'", []).unwrap(); drop(db);
+        assert!(save_to(&path, &b, before_external).await.is_err());
+        assert_eq!(load_from(&path).await.unwrap().0, vec![PathBuf::from("/external")]);
+        let (_, before_delete) = load_from(&path).await.unwrap();
+        std::fs::remove_file(path.parent().unwrap().join(LIBRARY_DB)).unwrap();
+        assert!(save_to(&path, &b, before_delete.clone()).await.is_err());
+        assert!(!path.parent().unwrap().join(LIBRARY_DB).exists());
+        load_from(&path).await.unwrap();
+        assert!(save_to(&path, &b, before_delete).await.is_err()); // new DB identity
+        clean_storage(&path);
     }
 
     #[tokio::test]
-    async fn detects_file_created_or_removed_since_load() {
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("novelcraft-library-change-{}-{unique}", std::process::id()));
-        let path = dir.join("library.json");
-        let (_, absent) = load_from(&path).await.unwrap();
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        tokio::fs::write(&path, b"[]").await.unwrap();
-        assert!(save_to(&path, &[PathBuf::from("/new.txt")], absent).await.is_err());
-        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"[]".to_vec());
-        let (_, present) = load_from(&path).await.unwrap();
-        tokio::fs::remove_file(&path).await.unwrap();
-        assert!(save_to(&path, &[PathBuf::from("/new.txt")], present).await.is_err());
-        assert!(!path.exists());
-        tokio::fs::remove_dir_all(dir).await.unwrap();
+    async fn relink_and_removal_preserve_books_and_bookmarks() {
+        let path = test_storage("relink"); std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let old = path.parent().unwrap().join("old.txt"); let new = path.parent().unwrap().join("new.txt");
+        let bookmarks = path.parent().unwrap().join("bookmarks.json");
+        std::fs::write(&old, b"old").unwrap(); std::fs::write(&new, b"new").unwrap(); std::fs::write(&bookmarks, b"bookmark").unwrap();
+        let (_, token) = load_from(&path).await.unwrap();
+        let token = save_to(&path, &[old.clone()], token).await.unwrap();
+        let updated = replace_book(&[old.clone()], &old, &new).unwrap();
+        assert!(validate_relink_target(path.parent().unwrap()).await.is_err());
+        std::fs::remove_file(&new).unwrap();
+        assert!(save_relinked_to(&path, updated.clone(), Some(token.clone()), &new).await.is_err());
+        std::fs::write(&new, b"new").unwrap();
+        let (saved, token) = save_relinked_to(&path, updated.clone(), Some(token), &new).await.unwrap();
+        assert_eq!(saved, updated); assert_eq!(load_from(&path).await.unwrap().0, updated);
+        save_to(&path, &without_book(&saved, &new), Some(token)).await.unwrap();
+        assert_eq!(std::fs::read(old).unwrap(), b"old"); assert_eq!(std::fs::read(new).unwrap(), b"new");
+        assert_eq!(std::fs::read(bookmarks).unwrap(), b"bookmark"); clean_storage(&path);
+    }
+
+    #[tokio::test]
+    async fn detects_changed_created_deleted_or_invalid_legacy_file() {
+        let path = test_storage("legacy"); std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let original = b"[\"/old\"]"; std::fs::write(&path, original).unwrap();
+        let (_, token) = load_from(&path).await.unwrap();
+        save_to(&path, &[PathBuf::from("/new")], token).await.unwrap();
+        std::fs::write(&path, b"[]").unwrap(); assert!(load_from(&path).await.is_err());
+        std::fs::remove_file(&path).unwrap(); assert!(load_from(&path).await.is_err());
+        std::fs::write(&path, original).unwrap(); assert_eq!(load_from(&path).await.unwrap().0, vec![PathBuf::from("/new")]);
+        clean_storage(&path);
+        load_from(&path).await.unwrap(); std::fs::write(&path, b"[]").unwrap(); assert!(load_from(&path).await.is_err()); clean_storage(&path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap(); std::fs::write(&path, b"invalid").unwrap();
+        assert!(load_from(&path).await.is_err()); assert!(!path.parent().unwrap().join(LIBRARY_DB).exists());
+        assert_eq!(std::fs::read(&path).unwrap(), b"invalid"); clean_storage(&path);
+    }
+
+    #[tokio::test]
+    async fn concurrent_saves_only_one_succeeds() {
+        let path = test_storage("concurrent"); let (_, token) = load_from(&path).await.unwrap(); let token = token.unwrap();
+        let a = path.clone(); let b = path.clone(); let t = token.clone();
+        let first = tokio::spawn(async move { save_to(&a, &[PathBuf::from("/a")], Some(t)).await });
+        let second = tokio::spawn(async move { save_to(&b, &[PathBuf::from("/b")], Some(token)).await });
+        let first = first.await.unwrap(); let second = second.await.unwrap(); assert_ne!(first.is_ok(), second.is_ok());
+        assert_eq!(load_from(&path).await.unwrap().0.len(), 1); clean_storage(&path);
+    }
+
+    #[tokio::test]
+    async fn view_controls_do_not_change_library_or_book() {
+        let path = test_storage("view"); std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let file = path.parent().unwrap().join("book.txt"); std::fs::write(&file, b"content").unwrap();
+        let (_, token) = load_from(&path).await.unwrap(); let token = save_to(&path, &[file.clone()], token).await.unwrap();
+        let mut library = Library { books: vec![file.clone()], loaded: true, snapshot: Some(token.clone()), ..Library::default() };
+        let _ = library.update(Message::Search("book".into())); let _ = library.update(Message::CycleSort); let _ = library.update(Message::ToggleMissingOnly);
+        assert_eq!(load_from(&path).await.unwrap(), (vec![file.clone()], Some(token)));
+        assert_eq!(std::fs::read(file).unwrap(), b"content"); clean_storage(&path);
+    }
+
+    #[test]
+    fn refuses_unrelated_database() {
+        let path = test_storage("foreign"); std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let db_path = path.parent().unwrap().join(LIBRARY_DB); let db = Connection::open(&db_path).unwrap();
+        db.execute("CREATE TABLE other(value TEXT)", []).unwrap(); drop(db);
+        let before = std::fs::read(&db_path).unwrap(); assert!(database_operation(&path, None).is_err());
+        assert_eq!(std::fs::read(db_path).unwrap(), before); clean_storage(&path);
     }
 
     #[cfg(unix)]
-    #[tokio::test]
-    async fn saved_library_uses_private_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("novelcraft-library-mode-{}-{unique}", std::process::id()));
-        let path = dir.join("library.json");
-        save_to(&path, &[PathBuf::from("/book.txt")], None).await.unwrap();
-        assert_eq!(tokio::fs::metadata(&path).await.unwrap().permissions().mode() & 0o077, 0);
-        tokio::fs::remove_dir_all(dir).await.unwrap();
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn symlink_is_not_followed_or_replaced() {
-        use std::os::unix::fs::symlink;
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("novelcraft-library-link-{}-{unique}", std::process::id()));
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        let path = dir.join("library.json");
-        let target = dir.join("target.json");
-        tokio::fs::write(&target, b"[]").await.unwrap();
-        symlink(&target, &path).unwrap();
-        assert!(load_from(&path).await.is_err());
-        assert!(save_to(&path, &[PathBuf::from("/book.txt")], None).await.is_err());
-        assert!(tokio::fs::symlink_metadata(&path).await.unwrap().file_type().is_symlink());
-        assert_eq!(tokio::fs::read(&target).await.unwrap(), b"[]".to_vec());
-        tokio::fs::remove_dir_all(dir).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn failed_replace_keeps_existing_directory_and_cleans_temp_file() {
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("novelcraft-library-error-{}-{unique}", std::process::id()));
-        let path = dir.join("library.json");
-        tokio::fs::create_dir_all(&path).await.unwrap();
-        assert!(save_to(&path, &[PathBuf::from("/book.txt")], None).await.is_err());
-        assert!(tokio::fs::metadata(&path).await.unwrap().is_dir());
-        let mut entries = tokio::fs::read_dir(&dir).await.unwrap();
-        assert_eq!(entries.next_entry().await.unwrap().unwrap().file_name(), "library.json");
-        assert!(entries.next_entry().await.unwrap().is_none());
-        tokio::fs::remove_dir_all(dir).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn saves_and_loads_list_and_rejects_corrupt_data() {
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("novelcraft-library-{}-{unique}", std::process::id()));
-        let path = dir.join("library.json");
-        assert!(load_from(&path).await.unwrap().0.is_empty());
-        let books = vec![PathBuf::from("/novel.md"), PathBuf::from("/buku.epub")];
-        save_to(&path, &books, None).await.unwrap();
-        assert_eq!(load_from(&path).await.unwrap().0, books);
-        tokio::fs::write(&path, b"not json").await.unwrap();
-        assert!(load_from(&path).await.is_err());
-        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"not json".to_vec());
-        tokio::fs::remove_dir_all(dir).await.unwrap();
+    #[test]
+    fn refuses_symlinks_non_utf8_and_checks_permissions() {
+        use std::os::unix::{ffi::OsStringExt, fs::{symlink, PermissionsExt}};
+        let path = test_storage("symlink"); std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let target = path.parent().unwrap().join("target"); std::fs::write(&target, b"[]").unwrap();
+        symlink(&target, &path).unwrap(); assert!(database_operation(&path, None).is_err()); std::fs::remove_file(&path).unwrap();
+        symlink(&target, path.parent().unwrap().join(LIBRARY_DB)).unwrap(); assert!(database_operation(&path, None).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"[]"); std::fs::remove_file(path.parent().unwrap().join(LIBRARY_DB)).unwrap();
+        let (_, token) = database_operation(&path, None).unwrap();
+        let invalid = PathBuf::from(std::ffi::OsString::from_vec(vec![0xff]));
+        assert!(database_operation(&path, Some((&[invalid], &token))).is_err());
+        assert_eq!(std::fs::metadata(path.parent().unwrap().join(LIBRARY_DB)).unwrap().permissions().mode() & 0o077, 0);
+        clean_storage(&path);
     }
 }

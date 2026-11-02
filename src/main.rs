@@ -154,7 +154,7 @@ impl NovelCraft {
             Message::CloseRequested(id) => {
                 if self.file_operation_in_progress() || self.writer.has_unsaved_changes() {
                     if self.page == Page::Reader {
-                        self.reader.invalidate_scroll_position();
+                        self.reader.suspend_scroll_position();
                     }
                     self.pending_close = Some(id);
                     Task::none()
@@ -192,7 +192,7 @@ impl NovelCraft {
             }
             Message::Navigate(page) => {
                 if self.page == Page::Reader && page != Page::Reader {
-                    self.reader.invalidate_scroll_position();
+                    self.reader.suspend_scroll_position();
                 }
                 if page != self.page {
                     self.focus_mode = false;

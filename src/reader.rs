@@ -26,6 +26,9 @@ pub struct Reader {
     scroll_percent: Option<u8>,
     scroll_revision: u64,
     pending_scroll: Option<u8>,
+    // snap_to does not emit on_scroll; retain its approximate target for the
+    // next page switch until a fresh measurement or layout change occurs.
+    restored_scroll_fallback: Option<u8>,
     busy: bool,
     pending_remove_bookmark: bool,
     error: Option<String>,
@@ -53,6 +56,7 @@ impl Default for Reader {
             scroll_percent: None,
             scroll_revision: 0,
             pending_scroll: None,
+            restored_scroll_fallback: None,
             busy: false,
             pending_remove_bookmark: false,
             error: None,
@@ -135,17 +139,28 @@ impl Reader {
 
     pub fn take_restore_task(&mut self) -> Task<Message> {
         match self.pending_scroll.take() {
-            Some(percent) => scrollable::snap_to(
-                scrollable::Id::new(SCROLL_ID),
-                scrollable::RelativeOffset { x: 0.0, y: f32::from(percent) / 100.0 },
-            ),
+            Some(percent) => {
+                self.restored_scroll_fallback = Some(percent);
+                scrollable::snap_to(
+                    scrollable::Id::new(SCROLL_ID),
+                    scrollable::RelativeOffset { x: 0.0, y: f32::from(percent) / 100.0 },
+                )
+            }
             None => Task::none(),
         }
     }
 
     pub fn invalidate_scroll_position(&mut self) {
         self.scroll_percent = None;
+        self.restored_scroll_fallback = None;
         self.scroll_revision = self.scroll_revision.wrapping_add(1);
+    }
+
+    pub fn suspend_scroll_position(&mut self) {
+        if self.path.is_some() && self.pending_scroll.is_none() {
+            self.pending_scroll = self.scroll_percent.or(self.restored_scroll_fallback);
+        }
+        self.invalidate_scroll_position();
     }
 
     pub fn open_path(&mut self, path: PathBuf) -> Option<Task<Message>> {
@@ -196,6 +211,7 @@ impl Reader {
         self.show_source = false;
         self.link_notice = None;
         self.path = Some(path);
+        self.pending_scroll = None;
         self.sections = document.sections;
         self.toc = document.toc;
         self.show_toc = false;
@@ -394,6 +410,7 @@ impl Reader {
                 if self.path.is_some() && !self.pending_remove_bookmark && revision == self.scroll_revision =>
             {
                 self.scroll_percent = percent;
+                self.restored_scroll_fallback = None;
             }
             _ => {}
         }
@@ -757,6 +774,97 @@ mod tests {
         assert_eq!(app.reader.pending_scroll, Some(35));
         let _ = app.update(crate::Message::Navigate(crate::Page::Reader));
         assert_eq!(app.reader.pending_scroll, None);
+    }
+
+    #[test]
+    fn page_navigation_remembers_measured_scroll_without_saving_bookmarks() {
+        use crate::{Message as AppMessage, NovelCraft, Page};
+        let mut app = NovelCraft::default();
+        app.page = Page::Reader;
+        app.reader = Reader { path: Some("book.epub".into()), sections: vec!["first".into(), "second".into()], section: 1, is_epub: true, scroll_percent: Some(63), ..Reader::default() };
+        let old_revision = app.reader.scroll_revision;
+        let _ = app.update(AppMessage::Navigate(Page::Library));
+        assert_eq!(app.reader.pending_scroll, Some(63));
+        assert_eq!(app.reader.section, 1);
+        assert_eq!(app.reader.scroll_percent, None);
+        let _ = app.update(AppMessage::Reader(Message::Scrolled { revision: old_revision, percent: Some(99) }));
+        assert_eq!(app.reader.pending_scroll, Some(63));
+        let _ = app.update(AppMessage::Navigate(Page::Reader));
+        assert_eq!(app.reader.pending_scroll, None);
+        assert_eq!(app.reader.restored_scroll_fallback, Some(63));
+        // snap_to itself may not emit on_scroll, so a second page switch still works.
+        let _ = app.update(AppMessage::Navigate(Page::Writer));
+        assert_eq!(app.reader.pending_scroll, Some(63));
+        let _ = app.update(AppMessage::Navigate(Page::Reader));
+        let revision = app.reader.scroll_revision;
+        let _ = app.update(AppMessage::Reader(Message::Scrolled { revision, percent: Some(80) }));
+        assert_eq!(app.reader.restored_scroll_fallback, None);
+        let _ = app.update(AppMessage::Navigate(Page::Settings));
+        assert_eq!(app.reader.pending_scroll, Some(80));
+    }
+
+    #[test]
+    fn close_dialog_defers_scroll_and_preserves_existing_bookmark_restore() {
+        use crate::{Message as AppMessage, NovelCraft, Page};
+        let mut app = NovelCraft::default();
+        app.page = Page::Reader;
+        app.reader = Reader { path: Some("book.txt".into()), sections: vec!["text".into()], scroll_percent: Some(44), busy: true, ..Reader::default() };
+        let id = iced::window::Id::unique();
+        let _ = app.update(AppMessage::CloseRequested(id));
+        assert_eq!(app.reader.pending_scroll, Some(44));
+        let _ = app.update(AppMessage::CancelClose);
+        assert_eq!(app.reader.restored_scroll_fallback, Some(44));
+        app.reader.pending_scroll = Some(20); // An explicit bookmark restore wins.
+        app.reader.scroll_percent = Some(90);
+        let _ = app.update(AppMessage::CloseRequested(id));
+        assert_eq!(app.reader.pending_scroll, Some(20));
+        let _ = app.update(AppMessage::CancelClose);
+        assert_eq!(app.reader.restored_scroll_fallback, Some(20));
+    }
+
+    #[test]
+    fn explicit_bookmark_restore_wins_over_temporary_scroll_when_hidden() {
+        use crate::{Message as AppMessage, NovelCraft, Page};
+        let mut app = NovelCraft::default();
+        app.page = Page::Reader;
+        let path = PathBuf::from("book.epub");
+        app.reader = Reader { path: Some(path.clone()), sections: vec!["one".into(), "two".into()], is_epub: true, scroll_percent: Some(60), ..Reader::default() };
+        let _ = app.update(AppMessage::Navigate(Page::Library));
+        assert_eq!(app.reader.pending_scroll, Some(60));
+        let bookmark = Bookmark { path, section: 1, section_count: Some(2), scroll_percent: Some(25), markdown_source: false };
+        let _ = app.update(AppMessage::Reader(Message::BookmarkLoaded(Ok(Some(bookmark)))));
+        assert_eq!(app.reader.section, 1);
+        assert_eq!(app.reader.pending_scroll, Some(25));
+        let _ = app.update(AppMessage::Navigate(Page::Reader));
+        assert_eq!(app.reader.restored_scroll_fallback, Some(25));
+        let _ = app.update(AppMessage::Reader(Message::PreviousSection));
+        assert_eq!(app.reader.section, 0);
+        assert_eq!(app.reader.restored_scroll_fallback, None);
+    }
+
+    #[test]
+    fn no_scroll_is_restored_when_position_was_never_measured() {
+        let mut reader = Reader { path: Some("book.txt".into()), sections: vec!["text".into()], ..Reader::default() };
+        reader.suspend_scroll_position();
+        assert_eq!(reader.pending_scroll, None);
+        let _ = reader.take_restore_task();
+        assert_eq!(reader.restored_scroll_fallback, None);
+    }
+
+    #[test]
+    fn new_document_clears_old_scroll_while_cancel_keeps_pending_position() {
+        use crate::{Message as AppMessage, NovelCraft, Page};
+        let mut app = NovelCraft::default();
+        app.page = Page::Reader;
+        app.reader = Reader { path: Some("old.txt".into()), sections: vec!["old".into()], scroll_percent: Some(50), busy: true, ..Reader::default() };
+        let _ = app.update(AppMessage::Navigate(Page::Library));
+        assert_eq!(app.reader.pending_scroll, Some(50));
+        let _ = app.update(AppMessage::Reader(Message::Opened(Ok(None))));
+        assert_eq!(app.reader.pending_scroll, Some(50));
+        let new_doc = Document { sections: vec!["new".into()], toc: Vec::new(), is_epub: false };
+        let _ = app.update(AppMessage::Reader(Message::Opened(Ok(Some(("new.txt".into(), new_doc))))));
+        assert_eq!(app.reader.pending_scroll, None);
+        assert_eq!(app.reader.path.as_deref(), Some(Path::new("new.txt")));
     }
 
     #[test]

@@ -67,7 +67,11 @@ teks karena pembungkusan ulang; indikator gulir menjadi `—` hingga terukur lag
 konten dapat digulir; tanda `—` berarti posisi belum tersedia. Angka tersebut
 adalah posisi scrollbar, bukan persentase buku yang telah dibaca. Gunakan tombol
 **Simpan posisi** dan **Pulihkan posisi** untuk menyimpan atau memuat penanda
-secara manual; posisi gulir biasa dapat kembali ke awal saat berpindah halaman.
+secara manual. Saat berpindah halaman dalam sesi yang sama, posisi gulir yang
+sudah terukur dipulihkan secara perkiraan ketika kembali ke Reader; ini tidak
+menulis atau mengganti penanda manual. Jika posisi belum terukur, termasuk setelah
+perubahan ukuran tampilan atau font, posisi dapat kembali ke awal. Pemulihan
+sementara ini tidak bertahan setelah aplikasi ditutup.
 EPUB ditampilkan sebagai teks per bagian dalam urutan spine (tidak selalu sama
 dengan bab). Gunakan tombol sebelumnya/berikutnya atau kolom **Ke bagian** untuk
 melompat langsung ke nomor bagian; lompatan dimulai dari atas bagian tersebut.

@@ -303,7 +303,7 @@ impl Library {
         let mut view = column![
             text("Library").size(32),
             text(if self.loaded { format!("{} file · tersimpan di lokasi aslinya", self.books.len()) } else { "Memuat Library lokal".to_owned() })
-                .size(14).color(crate::ui::muted(theme)),
+                .size(14).color(crate::mockup_style::muted(theme)),
             row![search, import, new_draft].spacing(10),
         ]
         .spacing(12)
@@ -382,8 +382,8 @@ impl Library {
             }
             let mut card = column![
                 text(name.to_string()).size(16),
-                text(path.display().to_string()).size(12).color(crate::ui::muted(theme)),
-                text(availability_label(self.availability.get(path), self.availability_active.is_some())).size(12).color(crate::ui::subtle(theme)),
+                text(path.display().to_string()).size(12).color(crate::mockup_style::muted(theme)),
+                text(availability_label(self.availability.get(path), self.availability_active.is_some())).size(12).color(crate::mockup_style::subtle(theme)),
             ]
             .width(Length::Fill)
             .spacing(8);
@@ -401,7 +401,7 @@ impl Library {
                         Some(percent) => format!("Perkiraan posisi keseluruhan: {percent}%"),
                         None => "Perkiraan posisi keseluruhan tidak tersedia".to_owned(),
                     };
-                    card = card.push(text(estimate).size(12).color(crate::ui::muted(theme)));
+                    card = card.push(text(estimate).size(12).color(crate::mockup_style::muted(theme)));
                     if let Some(percent) = estimated_position(path, bookmark) {
                         card = card.push(progress_bar(0.0..=100.0, f32::from(percent)).height(3));
                     }
@@ -418,7 +418,7 @@ impl Library {
                 container(row![spine, card].spacing(14))
                     .width(320)
                     .padding(20)
-                    .style(crate::ui::card),
+                    .style(crate::mockup_style::card),
             );
         }
         if self.loaded && !self.books.is_empty() && matches == 0 {

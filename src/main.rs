@@ -4,7 +4,8 @@ mod library;
 mod reader;
 mod settings;
 mod shortcuts;
-mod ui;
+#[path = "mockup_style.rs"]
+mod mockup_style;
 mod writer;
 
 use iced::widget::{button, column, container, horizontal_space, row, text, vertical_space, Column};
@@ -133,7 +134,7 @@ impl ThemeChoice {
 
     fn iced_theme(self) -> Theme {
         match self {
-            Self::NovelCraft => ui::mockup_theme(),
+            Self::NovelCraft => mockup_style::mockup_theme(),
             Self::TokyoNight => Theme::TokyoNight,
             Self::Dark => Theme::Dark,
             Self::Nord => Theme::Nord,
@@ -497,10 +498,10 @@ impl NovelCraft {
         let theme = self.theme_choice.iced_theme();
         let mut navigation = Column::new().spacing(4);
         if !self.focus_mode {
-            navigation = navigation.push(text("NAVIGATE").size(10).color(ui::subtle(&theme)));
+            navigation = navigation.push(text("NAVIGATE").size(10).color(mockup_style::subtle(&theme)));
             for page in Page::ALL {
                 if page == Page::Settings {
-                    navigation = navigation.push(container(text("CONFIG").size(10).color(ui::subtle(&theme))).padding(iced::Padding { top: 16.0, bottom: 4.0, ..iced::Padding::default() }));
+                    navigation = navigation.push(container(text("CONFIG").size(10).color(mockup_style::subtle(&theme))).padding(iced::Padding { top: 16.0, bottom: 4.0, ..iced::Padding::default() }));
                 }
                 let selected = self.page == page;
                 let marker = if selected { "▏" } else { "  " };
@@ -508,23 +509,23 @@ impl NovelCraft {
                     text(marker).color(theme.palette().primary),
                     text(page.title()).size(13),
                     horizontal_space(),
-                    text(page.shortcut_hint()).size(10).color(ui::subtle(&theme)),
+                    text(page.shortcut_hint()).size(10).color(mockup_style::subtle(&theme)),
                 ].align_y(iced::Alignment::Center).spacing(6);
                 navigation = navigation.push(
                     button(nav_label).width(Length::Fill).padding([9, 8])
-                        .style(move |theme, status| ui::navigation(theme, status, selected))
+                        .style(move |theme, status| mockup_style::navigation(theme, status, selected))
                         .on_press(Message::Navigate(page)),
                 );
             }
             let draft = self.writer.draft_stats_label();
             navigation = navigation.push(vertical_space()).push(
                 container(column![
-                    text("DRAFT SAAT INI").size(10).color(ui::subtle(&theme)),
+                    text("DRAFT SAAT INI").size(10).color(mockup_style::subtle(&theme)),
                     text(draft).size(18).color(theme.palette().primary),
-                    text("Target per draft · sesi ini").size(11).color(ui::muted(&theme)),
-                ].spacing(5)).width(Length::Fill).padding(12).style(ui::card),
+                    text("Target per draft · sesi ini").size(11).color(mockup_style::muted(&theme)),
+                ].spacing(5)).width(Length::Fill).padding(12).style(mockup_style::card),
             );
-            navigation = navigation.push(text("v0.1.0 · lokal").size(10).color(ui::subtle(&theme)));
+            navigation = navigation.push(text("v0.1.0 · lokal").size(10).color(mockup_style::subtle(&theme)));
         }
 
         // Preserve the sidebar's place in the widget tree for editor state.
@@ -532,7 +533,7 @@ impl NovelCraft {
             .width(if self.focus_mode { 0_u16 } else { 200_u16 })
             .height(Length::Fill)
             .padding(if self.focus_mode { 0_u16 } else { 12_u16 })
-            .style(ui::chrome);
+            .style(mockup_style::chrome);
 
         let page: Element<'_, Message> = if self.page == Page::Library {
             self.library.view(&theme).map(Message::Library)
@@ -567,8 +568,8 @@ impl NovelCraft {
         let mut topbar_content = row![
             text("●").size(12).color(theme.palette().primary),
             text("novelcraft").size(14).font(iced::Font::MONOSPACE),
-            text("│").size(14).color(ui::subtle(&theme)),
-            text(format!("~ / {}", self.page.title().to_lowercase())).size(12).color(ui::muted(&theme)),
+            text("│").size(14).color(mockup_style::subtle(&theme)),
+            text(format!("~ / {}", self.page.title().to_lowercase())).size(12).color(mockup_style::muted(&theme)),
             horizontal_space(),
             fullscreen,
         ].align_y(iced::Alignment::Center).spacing(10);
@@ -583,7 +584,7 @@ impl NovelCraft {
             .width(Length::Fill)
             .padding([0, 20])
             .center_y(48)
-            .style(ui::chrome);
+            .style(mockup_style::chrome);
 
         column![topbar, row![sidebar, content].height(Length::Fill)]
             .height(Length::Fill)
@@ -807,7 +808,7 @@ mod tests {
     #[test]
     fn application_defaults_to_mockup_theme() {
         assert_eq!(NovelCraft::default().theme_choice, ThemeChoice::NovelCraft);
-        assert_eq!(NovelCraft::default().theme_choice.iced_theme().palette(), ui::mockup_theme().palette());
+        assert_eq!(NovelCraft::default().theme_choice.iced_theme().palette(), mockup_style::mockup_theme().palette());
     }
 
     #[test]

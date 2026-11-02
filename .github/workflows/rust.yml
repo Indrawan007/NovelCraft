@@ -47,3 +47,38 @@ jobs:
             printf '::error title=Rust tests failed::%s\n' "$diagnostic"
           fi
           exit "$status"
+      - name: Temporary visual inspection
+        run: |
+          sudo apt-get install -y xvfb xdotool imagemagick mesa-vulkan-drivers
+          cargo build --locked
+          export WINIT_UNIX_BACKEND=x11
+          export XDG_CONFIG_HOME="$RUNNER_TEMP/config" XDG_DATA_HOME="$RUNNER_TEMP/data"
+          xvfb-run -a -s '-screen 0 1100x750x24' bash -c '
+            target/debug/novelcraft > "$RUNNER_TEMP/gui.log" 2>&1 &
+            app=$!
+            sleep 12
+            if ! kill -0 "$app"; then cat "$RUNNER_TEMP/gui.log"; exit 1; fi
+            window=$(xdotool search --name NovelCraft | head -1)
+            xdotool windowactivate --sync "$window" 2>/dev/null || xdotool windowfocus --sync "$window"
+            xdotool key ctrl+2
+            sleep 3
+            xdotool mousemove 1000 700
+            import -window root -colors 64 PNG8:"$RUNNER_TEMP/reader.png"
+            xdotool key ctrl+m
+            sleep 2
+            import -window root -colors 64 PNG8:"$RUNNER_TEMP/menu.png"
+            xdotool key ctrl+comma
+            sleep 2
+            import -window root -colors 64 PNG8:"$RUNNER_TEMP/settings.png"
+            kill "$app"
+          '
+          for name in reader menu settings; do
+            encoded=$(base64 -w 0 "$RUNNER_TEMP/$name.png")
+            python3 - "$name" "$encoded" <<'PY'
+          import sys
+          name, data = sys.argv[1:]
+          print(f'::notice title=VISUAL_{name}_COUNT::{(len(data)+4999)//5000}')
+          for i in range(0, len(data), 5000):
+              print(f'::notice title=VISUAL_{name}_{i//5000}::{data[i:i+5000]}')
+          PY
+          done

@@ -175,7 +175,7 @@ Membuka atau menulis catatan berjalan di worker. Jika pembuatan database gagal,
 file kosong atau belum lengkap dapat tertinggal dan perlu diperiksa. Simpan backup
 folder proyek; jangan memindahkan database ketika aplikasi sedang membukanya.
 Chapter tetap file Markdown dan daftar chapter tetap `.novelcraft.json`; Library
-dan bookmark juga masih JSON, jadi migrasi semua metadata ke SQLite belum selesai. Pemeriksaan path bukan penguncian filesystem dan tidak menutup semua race.
+masih JSON, jadi migrasi semua metadata ke SQLite belum selesai. Pemeriksaan path bukan penguncian filesystem dan tidak menutup semua race.
 
 **Target & streak** di panel proyek menyimpan target harian opsional dan
 menampilkan daftar kalender 31 hari terakhir. Jumlah harian adalah perubahan
@@ -288,19 +288,28 @@ tambahan tidak dipertahankan.
 Pemeriksaan konflik tidak mengunci file: perubahan setelah pemeriksaan terakhir
 masih bisa terlewat. Hindari beberapa instance dan tetap buat backup.
 
-Penanda Reader disimpan di `novelcraft/bookmarks.json` pada direktori data yang
+Penanda Reader disimpan di `novelcraft/bookmarks.sqlite3` pada direktori data yang
 sama. Satu posisi disimpan per path file; memindahkan file membuatnya dianggap
 file lain. Pemulihan memakai bagian EPUB dan persentase gulir perkiraan, sehingga
 perubahan isi, ukuran jendela, atau font dapat menggeser posisi. Jika posisi
 gulir belum terukur (`—`), hanya bagian yang disimpan dan dipulihkan dari atas.
-Penanda tidak disinkronkan antar-instance dan tidak disimpan secara otomatis.
-Tombol **Hapus penanda** di Reader meminta konfirmasi dan hanya menghapus
-penanda untuk file yang terbuka, bukan file bukunya; penanda file lain tetap ada.
-Penyimpanan dan penghapusan menolak file penanda yang berupa symbolic link,
-bukan file biasa, atau tidak valid. Sebelum mengganti file, aplikasi memeriksa
-apakah isinya berubah sejak operasi dimulai dan membatalkan operasi jika berbeda.
-Pemeriksaan ini tidak mengunci file: perubahan setelah pemeriksaan terakhir masih
-bisa terlewat; hindari menjalankan beberapa instance dan tetap buat backup.
+Penanda disimpan secara manual, bukan otomatis. Tombol **Hapus penanda** meminta
+konfirmasi dan hanya menghapus penanda file terbuka, bukan file bukunya.
+
+Pada akses pertama, `bookmarks.json` lama divalidasi dan diimpor ke SQLite dalam
+transaksi; JSON asli tidak dihapus atau ditimpa, dan field tambahan dipertahankan.
+**Cadangkan kedua file sebelum upgrade atau downgrade**: versi lama hanya membaca
+JSON dan tidak melihat perubahan pada SQLite. Jika JSON lama dibuat, diubah,
+dihapus, atau menjadi symbolic link setelah migrasi, akses penanda ditolak agar
+perubahan versi lama tidak diabaikan. Bandingkan kedua salinan dan pulihkan JSON
+ke isi saat migrasi untuk melanjutkan setelah membuat cadangan; penggabungan tidak
+otomatis. Snapshot JSON asli juga tersimpan di database. Database lain, versi yang
+tidak didukung, data rusak, dan symbolic link ditolak. Jika inisialisasi gagal,
+file database kosong atau belum lengkap dapat tertinggal dan perlu diperiksa.
+SQLite melindungi transaksi, tetapi pemeriksaan file JSON tidak mengunci filesystem;
+hindari menjalankan versi lama bersamaan dan tetap buat backup. Pada saat dua
+proses pertama kali menginisialisasi database bersamaan, salah satunya dapat gagal;
+coba ulang setelah proses pertama selesai. Database baru dibuat privat (0600 di Unix).
 Kartu Library menampilkan penanda yang terakhir disimpan secara manual, bukan
 posisi terkini. Perkiraan posisi keseluruhan TXT/Markdown memakai posisi gulir;
 untuk EPUB dihitung dari nomor bagian, posisi gulir bagian, dan jumlah bagian

@@ -2,6 +2,7 @@ mod bookmarks;
 mod epub_reader;
 mod library;
 mod reader;
+mod project;
 mod settings;
 mod shortcuts;
 #[path = "mockup_style.rs"]

@@ -11,6 +11,8 @@ pub struct Writer {
     path: Option<PathBuf>,
     saved_contents: Option<String>,
     target_input: String,
+    project: Option<crate::project::Project>,
+    chapter_title: String,
     show_preview: bool,
     preview_items: Vec<markdown::Item>,
     preview_notice: Option<String>,
@@ -22,10 +24,11 @@ pub struct Writer {
     error: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingAction {
     NewDraft,
     Open,
+    OpenChapter(PathBuf),
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +49,13 @@ pub enum Message {
     PreviewLink(markdown::Url),
     NewDraft,
     Open,
+    CreateProject,
+    OpenProject,
+    ProjectLoaded(Result<Option<crate::project::Project>, String>),
+    ChapterTitleChanged(String),
+    AddChapter,
+    ChapterAdded(Result<crate::project::Project, String>),
+    OpenChapter(usize),
     ConfirmDiscard,
     CancelDiscard,
     Opened(Result<Option<(PathBuf, String)>, String>),
@@ -114,6 +124,48 @@ impl Writer {
                     self.pending_discard = Some(action);
                 } else {
                     return self.perform_action(action);
+                }
+            }
+            Message::CreateProject | Message::OpenProject if !self.controls_blocked() => {
+                let create = matches!(message, Message::CreateProject);
+                self.busy = true;
+                self.error = None;
+                return Task::perform(pick_project(create), Message::ProjectLoaded);
+            }
+            Message::ProjectLoaded(result) => {
+                self.busy = false;
+                match result {
+                    Ok(Some(project)) => {
+                        self.project = Some(project);
+                        self.chapter_title.clear();
+                        self.error = None;
+                    }
+                    Ok(None) => {}
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            Message::ChapterTitleChanged(title) if !self.controls_blocked() => self.chapter_title = title,
+            Message::AddChapter if !self.controls_blocked() => {
+                if let Some(project) = self.project.clone() {
+                    self.busy = true;
+                    self.error = None;
+                    return Task::perform(crate::project::add_chapter(project, self.chapter_title.clone()), Message::ChapterAdded);
+                }
+            }
+            Message::ChapterAdded(result) => {
+                self.busy = false;
+                match result {
+                    Ok(project) => { self.project = Some(project); self.chapter_title.clear(); self.error = None; }
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            Message::OpenChapter(index) if !self.controls_blocked() => {
+                if let Some(path) = self.project.as_ref().and_then(|project| project.chapter_path(index)) {
+                    if self.path.as_ref() != Some(&path) {
+                        let action = PendingAction::OpenChapter(path);
+                        if self.dirty { self.pending_discard = Some(action); }
+                        else { return self.perform_action(action); }
+                    }
                 }
             }
             Message::ConfirmDiscard if !self.busy => {
@@ -235,8 +287,15 @@ impl Writer {
     fn perform_action(&mut self, action: PendingAction) -> Task<Message> {
         match action {
             PendingAction::NewDraft => {
+                let project = self.project.take();
                 *self = Self::default();
+                self.project = project;
                 Task::none()
+            }
+            PendingAction::OpenChapter(path) => {
+                self.busy = true;
+                self.error = None;
+                Task::perform(read_named_file(path), Message::Opened)
             }
             PendingAction::Open => {
                 self.busy = true;
@@ -285,13 +344,13 @@ impl Writer {
         .spacing(12)
         .height(Length::Fill);
 
-        if let Some(action) = self.pending_discard {
+        if let Some(action) = &self.pending_discard {
             let (question, confirm_label) = match action {
                 PendingAction::NewDraft => (
                     "Perubahan belum disimpan. Buang perubahan dan buat draft baru?",
                     "Buang & buat baru",
                 ),
-                PendingAction::Open => (
+                PendingAction::Open | PendingAction::OpenChapter(_) => (
                     "Perubahan belum disimpan. Buang perubahan dan buka file lain?",
                     "Buang & buka",
                 ),
@@ -368,7 +427,38 @@ impl Writer {
         if !self.controls_blocked() {
             target_input = target_input.on_input(Message::TargetChanged);
         }
-        view = view.push(editing_area).push(
+        let mut create_project = button("Proyek baru");
+        let mut open_project = button("Buka proyek");
+        if !self.controls_blocked() {
+            create_project = create_project.on_press(Message::CreateProject);
+            open_project = open_project.on_press(Message::OpenProject);
+        }
+        let mut project_panel = column![
+            text("Chapter").size(18),
+            row![create_project, open_project].spacing(6).wrap(),
+        ].spacing(8).width(220).height(Length::Fill);
+        if let Some(project) = &self.project {
+            project_panel = project_panel.push(text(project.folder().display().to_string()).size(12));
+            let mut title = text_input("Judul chapter", &self.chapter_title).size(13);
+            let mut add = button("Tambah chapter");
+            if !self.controls_blocked() {
+                title = title.on_input(Message::ChapterTitleChanged);
+                add = add.on_press(Message::AddChapter);
+            }
+            project_panel = project_panel.push(title).push(add);
+            let mut chapters = iced::widget::Column::new().spacing(6).width(Length::Fill);
+            for (index, chapter) in project.chapters().iter().enumerate() {
+                let active = project.chapter_path(index).as_ref() == self.path.as_ref();
+                let label = format!("{:02}. {}{}", index + 1, chapter.title, if active { " (terbuka)" } else { "" });
+                let mut open_chapter = button(text(label).size(13)).width(Length::Fill);
+                if !self.controls_blocked() { open_chapter = open_chapter.on_press(Message::OpenChapter(index)); }
+                chapters = chapters.push(open_chapter);
+            }
+            project_panel = project_panel.push(scrollable(chapters).height(Length::Fill));
+        } else {
+            project_panel = project_panel.push(text("Buat atau buka folder proyek untuk menyimpan chapter sebagai file Markdown.").size(12));
+        }
+        view = view.push(row![project_panel, container(editing_area).width(Length::Fill).height(Length::Fill)].spacing(12).height(Length::Fill)).push(
             row![text(format!("{words} kata")), text("Target draft:"), target_input]
                 .spacing(12),
         );
@@ -426,6 +516,19 @@ fn editor_key_binding(press: text_editor::KeyPress) -> Option<text_editor::Bindi
         }
     }
     text_editor::Binding::from_key_press(press)
+}
+
+async fn pick_project(create: bool) -> Result<Option<crate::project::Project>, String> {
+    let Some(folder) = rfd::AsyncFileDialog::new().pick_folder().await else { return Ok(None); };
+    let path = folder.path().to_owned();
+    if create { crate::project::create(path).await.map(Some) }
+    else { crate::project::open(path).await.map(Some) }
+}
+
+async fn read_named_file(path: PathBuf) -> Result<Option<(PathBuf, String)>, String> {
+    let contents = tokio::fs::read_to_string(&path).await
+        .map_err(|error| format!("Gagal membuka chapter: {error}"))?;
+    Ok(Some((path, contents)))
 }
 
 async fn open_file() -> Result<Option<(PathBuf, String)>, String> {
@@ -517,7 +620,7 @@ async fn is_same_file(current: &Path, destination: &Path) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum FileState {
+pub(crate) enum FileState {
     Missing,
     Present(Vec<u8>),
 }
@@ -543,6 +646,14 @@ async fn check_file_state(path: &Path, expected: &FileState) -> std::io::Result<
 // Keep the old file intact until the complete replacement is ready. Follow an
 // existing symlink rather than replacing the link itself.
 async fn atomic_write_checked(path: &Path, contents: &[u8], expected: Option<&FileState>) -> std::io::Result<()> {
+    atomic_write_with_policy(path, contents, expected, true).await
+}
+
+pub(crate) async fn atomic_write_regular_checked(path: &Path, contents: &[u8], expected: &FileState) -> std::io::Result<()> {
+    atomic_write_with_policy(path, contents, Some(expected), false).await
+}
+
+async fn atomic_write_with_policy(path: &Path, contents: &[u8], expected: Option<&FileState>, follow_symlinks: bool) -> std::io::Result<()> {
     use std::io::{Error, ErrorKind};
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
@@ -550,6 +661,9 @@ async fn atomic_write_checked(path: &Path, contents: &[u8], expected: Option<&Fi
         check_file_state(path, expected).await?;
     }
     let (destination, followed_symlink) = match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.file_type().is_symlink() && !follow_symlinks => {
+            return Err(Error::new(ErrorKind::InvalidInput, "Metadata tidak boleh berupa symbolic link"));
+        }
         Ok(metadata) if metadata.file_type().is_symlink() => (tokio::fs::canonicalize(path).await?, true),
         Ok(_) => (path.to_owned(), false),
         Err(error) if error.kind() == ErrorKind::NotFound => (path.to_owned(), false),
@@ -629,6 +743,36 @@ async fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn chapter_switch_respects_unsaved_draft_and_new_draft_keeps_project() {
+        use iced::widget::text_editor::{Action, Edit};
+        let dir = std::env::temp_dir().join(format!("novelcraft-writer-project-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let project = crate::project::create(dir.clone()).await.unwrap();
+        let project = crate::project::add_chapter(project, "Prolog".into()).await.unwrap();
+        let path = project.chapter_path(0).unwrap();
+        let mut writer = Writer::default();
+        let _ = writer.update(Message::ProjectLoaded(Ok(Some(project))));
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Insert('x'))));
+        let _ = writer.update(Message::OpenChapter(0));
+        assert_eq!(writer.pending_discard, Some(PendingAction::OpenChapter(path.clone())));
+        let _ = writer.update(Message::CancelDiscard);
+        assert!(writer.has_unsaved_changes());
+        let _ = writer.update(Message::OpenChapter(0));
+        let _ = writer.update(Message::ConfirmDiscard);
+        assert!(writer.is_busy());
+        let _ = writer.update(Message::Opened(Err("Gagal membuka".into())));
+        assert!(writer.has_unsaved_changes());
+        let _ = writer.update(Message::OpenChapter(0));
+        let _ = writer.update(Message::ConfirmDiscard);
+        let _ = writer.update(Message::Opened(read_named_file(path).await));
+        assert!(!writer.has_unsaved_changes());
+        assert!(writer.project.is_some());
+        let _ = writer.update(Message::NewDraft);
+        assert!(writer.project.is_some());
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
 
     #[test]
     fn summarizes_mixed_line_endings_and_trailing_separators() {

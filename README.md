@@ -118,6 +118,32 @@ integrasi Hyprland belum dibuat.
 Reader, Writer, dan Settings belum sepenuhnya mengikuti mockup. Data dan kontrol
 contoh di mockup tidak otomatis menjadi fitur aplikasi native.
 
+### Proyek dan chapter (tahap awal)
+
+Di Writer, **Proyek baru** memilih folder yang sudah ada dan membuat `.novelcraft.json`
+di dalamnya; file metadata yang sudah ada tidak ditimpa. **Buka proyek** memilih
+folder yang berisi metadata itu. Masukkan judul dan pilih **Tambah chapter** untuk
+membuat file kosong `chapter-N.md`; klik chapter pada daftar untuk membukanya di
+editor, lalu simpan secara manual seperti draft biasa. Folder dapat berisi file lain:
+nomor yang sudah dipakai dilewati, bukan ditimpa. Judul disimpan di metadata,
+bukan otomatis ditulis ke isi Markdown. Proyek tidak dibuka otomatis pada sesi berikutnya.
+
+Membuka chapter lain meminta konfirmasi jika draft saat ini belum disimpan;
+menolak konfirmasi mempertahankan draft. Beralih proyek tidak mengganti isi editor.
+File chapter tetap file Markdown biasa, dapat dibuka di editor lain, dan tetap
+mengikuti pemeriksaan konflik serta batasan penyimpanan Writer di bawah. **Simpan
+sebagai** menulis ke lokasi lain tetapi tidak mengubah daftar chapter proyek.
+Saat ini belum ada impor file chapter yang sudah ada, rename, hapus, urut ulang,
+tree view, drag & drop, atau autosave.
+
+Metadata proyek divalidasi dan perubahan eksternal diperiksa sebelum penulisan;
+metadata rusak, versi tidak didukung, dan symbolic link ditolak. Jika pembuatan
+chapter berhasil tetapi penulisan metadata gagal atau berkonflik, file kosong
+mungkin tertinggal di folder dan tidak masuk daftar; pesan kesalahan menyebutkan
+nama file tersebut. Pembuatan metadata proyek yang gagal saat menulis juga dapat
+meninggalkan metadata belum lengkap. Tidak ada penguncian lintas instance dan
+pemeriksaan konflik tidak menutup semua race; gunakan satu instance dan buat backup.
+
 Writer meminta konfirmasi sebelum membuat draft baru, membuka file lain, atau
 menutup jendela jika draft memiliki perubahan yang belum disimpan. Saat operasi file Reader, Writer, Library, atau
 Settings masih berlangsung, selesaikan dialog atau tunggu prosesnya sebelum
@@ -232,6 +258,7 @@ Daftar di bawah ini adalah **target MVP**, bukan fitur yang sudah selesai.
 - [x] Tema gelap NovelCraft dan tema bawaan Iced
 
 ### ✍️ Mode Tulis (Writer)
+- [x] Proyek chapter dasar: buat/buka folder proyek, tambah dan buka chapter Markdown
 - [x] Draft baru dengan konfirmasi untuk perubahan yang belum disimpan
 - [x] Preview Markdown dasar di samping editor
 - [x] Mode fokus Writer (sembunyikan sidebar; tanpa fullscreen)
@@ -452,7 +479,7 @@ file. Aturan dan integrasi Hyprland belum tersedia.
 
 ### Phase 2 — Novel Writing Suite *(target: v0.3)*
 > Fitur khusus untuk menulis novel secara serius.
-- [ ] Chapter management (tree view, drag & drop)
+- [ ] Chapter management lengkap (buat/buka proyek dan tambah/buka chapter sudah tersedia; ubah nama, hapus, susun ulang, tree view dan drag & drop belum)
 - [ ] Character database (nama, deskripsi, relasi)
 - [ ] World-building notes (tempat, waktu, lore)
 - [ ] Word count target harian (target sementara per draft sudah tersedia)

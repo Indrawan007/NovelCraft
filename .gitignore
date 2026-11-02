@@ -68,7 +68,6 @@ Thumbs.db
 # ═══════════════════════════════════════════
 *.pkg.tar.zst
 *.pkg.tar.xz
-/src/
 /pkg/
 *.log
 

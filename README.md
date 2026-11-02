@@ -6,10 +6,9 @@
 
 *Dibangun dengan Rust untuk Arch Linux + Hyprland*
 
-[![Rust](https://img.shields.io/badge/Rust-1.75+-orange?logo=rust)](https://rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-stable-orange?logo=rust)](https://rust-lang.org)
 [![Iced](https://img.shields.io/badge/GUI-Iced%200.13-blue)](https://iced.rs)
 [![Wayland](https://img.shields.io/badge/Display-Wayland-green)](https://wayland.freedesktop.org)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Arch%20Linux-blueviolet)](https://archlinux.org)
 
 </div>
@@ -39,33 +38,185 @@ desktop modern berbasis Wayland.
 
 ---
 
-## ✨ Fitur Saat Ini (v0.1.0 — MVP)
+## 🚧 Status Implementasi
+
+Proyek masih dalam tahap awal. Aplikasi Rust saat ini memiliki jendela Iced,
+tema gelap Tokyo Night bawaan Iced, dan navigasi antara Library, Reader, Writer, dan Settings. Writer
+menyediakan editor teks, hitungan kata, draft baru, syntax highlighting Markdown
+dasar, preview Markdown langsung, serta buka dan simpan file TXT/Markdown.
+Highlighting aktif untuk draft baru dan file `.md`/`.markdown` (termasuk huruf
+besar); file TXT ditampilkan sebagai teks biasa. Warna editor menggunakan tema
+highlighter gelap bawaan Iced yang berbeda dari palet tema aplikasi. Preview memakai isi editor saat ini dan
+tidak menyimpan file atau membuka tautan secara otomatis. Tombol **Mode fokus**
+di Writer menyembunyikan sidebar; tekan **Keluar mode fokus** untuk
+menampilkannya kembali. Mode fokus tidak mengaktifkan fullscreen dan otomatis
+berakhir saat berpindah halaman. Shortcut navigasi tetap tersedia. Writer juga
+menyediakan target jumlah kata per draft dan progress bar; target hanya berlaku
+selama sesi dan direset ketika draft baru dibuat atau sebuah file berhasil dibuka.
+Target menghitung seluruh isi draft berdasarkan pemisah whitespace, termasuk
+teks yang sudah ada dan markup Markdown. Ini bukan target harian; mengubah target
+tidak mengubah atau menyimpan isi file. Kosongkan kolom untuk menyembunyikan target.
+Reader dapat membuka file EPUB, TXT/Markdown UTF-8, menggulir teks, dan mengatur
+ukuran font. Posisi gulir ditampilkan untuk dokumen teks atau bagian EPUB saat
+konten dapat digulir; tanda `—` berarti posisi belum tersedia. Angka tersebut
+adalah posisi scrollbar, bukan persentase buku yang telah dibaca. Gunakan tombol
+**Simpan posisi** dan **Pulihkan posisi** untuk menyimpan atau memuat penanda
+secara manual; posisi gulir biasa dapat kembali ke awal saat berpindah halaman.
+EPUB ditampilkan sebagai teks per bagian dalam urutan spine (tidak selalu sama
+dengan bab). Gunakan tombol sebelumnya/berikutnya atau kolom **Ke bagian** untuk
+melompat langsung ke nomor bagian; lompatan dimulai dari atas bagian tersebut.
+Pencarian teks EPUB menemukan bagian sebelumnya/berikutnya dengan mengubah teks
+ke huruf kecil Unicode (bukan case folding penuh), memutar kembali saat mencapai
+ujung, dan kembali ke awal bagian yang cocok. Pencarian tidak menyorot atau melompat ke posisi kata, hanya mencari teks
+hasil ekstraksi, dan dapat terasa lambat pada buku besar. Gambar, gaya, dan daftar
+isi belum dirender. Markdown
+memiliki tampilan dasar untuk judul, paragraf, daftar, penekanan, dan blok kode,
+serta pilihan untuk melihat sumber mentah. Tabel, gambar, HTML, dan elemen lain
+yang belum didukung dapat dilihat di mode sumber. Tautan tidak dibuka otomatis.
+Library menampilkan kartu satu kolom berisi nama dan lokasi file, menyediakan
+pencarian nama file, menampilkan penanda manual yang tersimpan, dan dapat membuka
+file di Reader. Settings menyediakan pilihan tema gelap yang disimpan lokal;
+integrasi Hyprland belum dibuat.
+`mockup.html` adalah referensi desain, bukan aplikasi native yang fungsional.
+
+Writer meminta konfirmasi sebelum membuat draft baru, membuka file lain, atau
+menutup jendela jika draft memiliki perubahan yang belum disimpan. Saat operasi file Reader, Writer, Library, atau
+Settings masih berlangsung, selesaikan dialog atau tunggu prosesnya sebelum
+menutup aplikasi. Simpan draft secara manual; peringatan penutupan tidak dapat
+melindungi dari penghentian paksa, crash, atau kehilangan daya. Dialog file
+Wayland memerlukan portal desktop yang berfungsi.
+
+Penyimpanan Writer menulis file sementara di direktori tujuan sebelum mengganti
+file lama. Pada Linux, symbolic link yang valid diikuti dan izin file dipertahankan;
+file dengan hard link atau yang pemilik/grupnya akan berubah ditolak. File baru
+dibuat dengan izin privat (0600) pada Linux. Atribut lanjutan seperti ACL dan
+extended attributes belum dipertahankan.
+
+Writer memeriksa perubahan isi file di luar aplikasi sebelum menyimpan. Jika file
+berubah atau terhapus, gunakan **Simpan sebagai** untuk menyimpan draft di lokasi
+lain. Pemeriksaan ini tidak mengunci file: perubahan tepat antara pemeriksaan
+terakhir dan penggantian masih dapat terlewat. Tetap buat backup.
+Menyimpan file yang belum diedit mempertahankan isi UTF-8 aslinya, termasuk
+format newline. Setelah diedit, ekspor editor Iced menormalkan pemisah baris
+menjadi LF, dapat menambahkan newline di akhir, dan dapat mengurangi baris kosong
+akhir. Writer meminta konfirmasi sebelum setiap penyimpanan draft yang diedit,
+termasuk Simpan sebagai; batal mempertahankan draft tanpa menulis file. Dialog
+menampilkan jumlah pemisah baris pada versi tersimpan dan pada hasil yang akan
+ditulis, termasuk jumlah pemisah di akhir. Perbedaannya dapat berasal dari edit
+pengguna maupun normalisasi, sehingga bukan diff isi. Periksa hasil simpan dan
+gunakan backup bila format baris penting.
+
+Library menyimpan lokasi file di `$XDG_DATA_HOME/novelcraft/library.json`, atau
+`~/.local/share/novelcraft/library.json` jika `XDG_DATA_HOME` tidak ditetapkan
+sebagai path absolut. File asli tidak dipindahkan atau dihapus. Jika file asli
+pindah atau terhapus, entri perlu dihapus dan ditambahkan ulang. Library menolak
+menimpa daftar yang berubah sejak dimuat; gunakan **Muat ulang Library** sebelum
+mencoba menambahkan atau menghapus entri lagi. File Library yang rusak, bukan
+file biasa, atau berupa symbolic link ditolak tanpa diganti. Pada Linux, daftar
+baru ditulis dengan izin privat (maksimal 0600, sesuai umask); ACL dan atribut
+tambahan tidak dipertahankan.
+Pemeriksaan konflik tidak mengunci file: perubahan setelah pemeriksaan terakhir
+masih bisa terlewat. Hindari beberapa instance dan tetap buat backup.
+
+Penanda Reader disimpan di `novelcraft/bookmarks.json` pada direktori data yang
+sama. Satu posisi disimpan per path file; memindahkan file membuatnya dianggap
+file lain. Pemulihan memakai bagian EPUB dan persentase gulir perkiraan, sehingga
+perubahan isi, ukuran jendela, atau font dapat menggeser posisi. Jika posisi
+gulir belum terukur (`—`), hanya bagian yang disimpan dan dipulihkan dari atas.
+Penanda tidak disinkronkan antar-instance dan tidak disimpan secara otomatis.
+Tombol **Hapus penanda** di Reader meminta konfirmasi dan hanya menghapus
+penanda untuk file yang terbuka, bukan file bukunya; penanda file lain tetap ada.
+Penyimpanan dan penghapusan menolak file penanda yang berupa symbolic link,
+bukan file biasa, atau tidak valid. Sebelum mengganti file, aplikasi memeriksa
+apakah isinya berubah sejak operasi dimulai dan membatalkan operasi jika berbeda.
+Pemeriksaan ini tidak mengunci file: perubahan setelah pemeriksaan terakhir masih
+bisa terlewat; hindari menjalankan beberapa instance dan tetap buat backup.
+Kartu Library menampilkan penanda yang terakhir disimpan secara manual, bukan
+posisi terkini. Perkiraan posisi keseluruhan TXT/Markdown memakai posisi gulir;
+untuk EPUB dihitung dari nomor bagian, posisi gulir bagian, dan jumlah bagian
+saat penanda disimpan. Setiap bagian EPUB berbobot sama meskipun panjangnya
+berbeda, sehingga angka ini bukan ukuran banyaknya teks yang telah dibaca.
+Perubahan isi file, ukuran jendela, atau font dapat membuat perkiraan meleset.
+Jika posisi gulir tidak tersedia, perkiraan tidak ditampilkan. Penanda EPUB
+lama yang belum menyimpan jumlah bagian tetap dapat dipulihkan; simpan ulang
+penanda di Reader untuk mendapatkan perkiraan. Tombol **Lanjut baca** pada kartu
+dengan penanda membuka file dan mencoba memulihkan penanda tersebut; tombol
+**Baca** tetap membuka dari awal. Jika penanda hilang atau tidak valid, dokumen
+yang berhasil dibuka dimulai dari awal dengan pemberitahuan. Menghapus kartu dari Library
+tidak menghapus file atau penanda.
+
+Daftar di bawah ini adalah **target MVP**, bukan fitur yang sudah selesai.
+
+## ✨ Target Fitur MVP (v0.1.0)
 
 ### 📖 Mode Baca (Reader)
-- [x] Buka file EPUB, TXT, Markdown
+- [x] Buka file TXT dan Markdown UTF-8
+- [x] Buka EPUB sebagai teks, lompat ke bagian spine, dan cari bagian berdasarkan teks
+- [x] Render Markdown dasar dan lihat sumber
 - [x] Atur ukuran font (A+/A-)
-- [x] Scroll reading dengan progress
+- [x] Scroll reading dan indikator posisi gulir per dokumen/bagian
+- [x] Simpan, pulihkan, dan hapus satu penanda posisi manual per file antar-sesi
 - [x] Dark theme (Tokyo Night)
 
 ### ✍️ Mode Tulis (Writer)
-- [x] Text editor dengan syntax highlighting dasar
-- [x] Word counter real-time
+- [x] Draft baru dengan konfirmasi untuk perubahan yang belum disimpan
+- [x] Preview Markdown dasar di samping editor
+- [x] Mode fokus Writer (sembunyikan sidebar; tanpa fullscreen)
+- [x] Text editor dengan syntax highlighting Markdown dasar
+- [x] Word counter real-time dan target jumlah kata sementara per draft
 - [x] Buka & simpan file (Markdown, TXT)
-- [x] Native file dialog (Wayland)
+- [x] Native file dialog (Wayland, via portal)
 
 ### 🏠 Library
-- [x] Daftar novel dengan progress baca
-- [x] Pencarian novel
-- [x] Tampilan card-based
+- [x] Tampilkan penanda baca manual per file pada kartu dan lanjut baca dari penanda
+- [x] Perkiraan posisi keseluruhan dari penanda manual (EPUB: bobot bagian sama)
+- [x] Pencarian berdasarkan nama file
+- [x] Tampilan kartu sederhana satu kolom
 
 ### ⚙️ Umum
 - [x] Sidebar navigation
-- [x] Dark theme bawaan
-- [x] Single binary, tanpa dependency runtime
+- [x] Pilihan tema gelap bawaan Iced yang disimpan lokal
+- [ ] Single binary, tanpa dependency runtime
 
 ---
 
-## 🛠️ Tech Stack
+## 🎨 Tema
+
+Di Settings, pilih Tokyo Night, Dark, Nord, atau Dracula. Tema berubah setelah
+berhasil disimpan dan dipulihkan saat aplikasi dibuka ulang; sebelum pengaturan
+dimuat atau jika gagal dimuat, digunakan Tokyo Night. Tema berlaku pada antarmuka
+dan Markdown Reader/preview Writer. Syntax highlighting editor tetap menggunakan
+palet gelap bawaan Iced yang terpisah.
+
+Pengaturan tersimpan di `$XDG_CONFIG_HOME/novelcraft/settings.json`, atau
+`~/.config/novelcraft/settings.json` jika `XDG_CONFIG_HOME` tidak absolut. File
+rusak, tema tidak dikenal, dan symbolic link ditolak tanpa ditimpa; perbaiki file
+lalu muat ulang di Settings. Jika penyimpanan gagal, tema aktif tidak berubah.
+Penulisan memakai file sementara dan rename; di Linux file hasil simpan privat
+(0600), dan ACL/atribut tambahan tidak dipertahankan. Tidak ada sinkronisasi atau
+penguncian antar-instance; perubahan antara pemeriksaan terakhir dan rename
+masih dapat terlewat. Hindari menjalankan beberapa instance bersamaan.
+
+---
+
+## ⌨️ Shortcut Keyboard (Linux)
+
+| Shortcut | Aksi |
+|---|---|
+| `Ctrl+1`, `Ctrl+2`, `Ctrl+3` | Buka Library, Reader, atau Writer |
+| `Ctrl+,` | Buka Settings |
+| `Ctrl+N`, `Ctrl+O` | Draft baru atau buka file di Writer |
+| `Ctrl+S`, `Ctrl+Shift+S` | Simpan atau simpan sebagai di Writer |
+
+Shortcut Writer hanya aktif saat halaman Writer terbuka dan tetap mengikuti
+konfirmasi serta status operasi file. Kontrol yang sedang fokus atau shortcut
+sistem dapat menangani kombinasi tombol lebih dahulu.
+
+---
+
+## 🛠️ Tech Stack yang Direncanakan
+
+Tidak semua komponen di bawah sudah ditambahkan atau diimplementasikan.
 
 ### Core
 
@@ -81,7 +232,7 @@ desktop modern berbasis Wayland.
 | Fungsi | Crate | Keterangan |
 |---|---|---|
 | **EPUB Reader** | [`epub`](https://crates.io/crates/epub) | Parse EPUB 2 & 3 |
-| **Markdown** | [`pulldown-cmark`](https://crates.io/crates/pulldown-cmark) | CommonMark parser |
+| **Markdown** | Iced Markdown (`pulldown-cmark`) dan Iced highlighter (`syntect`) | Rendering dasar, mode sumber, dan highlighting editor |
 | **Export PDF** | [`printpdf`](https://crates.io/crates/printpdf) *(roadmap)* | Generate PDF dari Markdown |
 | **Export EPUB** | [`epub-builder`](https://crates.io/crates/epub-builder) *(roadmap)* | Build EPUB dari chapter |
 
@@ -94,7 +245,7 @@ desktop modern berbasis Wayland.
 | **Desktop Entry** | `.desktop` file | Terintegrasi dengan app launcher |
 | **Packaging** | `PKGBUILD` (AUR) | Mudah install di Arch |
 
-### Arsitektur
+### Arsitektur yang Direncanakan
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -136,11 +287,15 @@ rustup default stable
 
 ```bash
 # Clone repository
-git clone https://github.com/username/novelcraft.git
-cd novelcraft
+git clone https://github.com/Indrawan007/NovelCraft.git
+cd NovelCraft
 
 # Development build
 cargo run
+
+# Pemeriksaan dan unit test
+cargo check --all-targets
+cargo test --all-targets
 
 # Release build (optimized)
 cargo build --release
@@ -157,38 +312,33 @@ yay -S novelcraft
 
 ### Desktop Entry
 
-```bash
-# Copy desktop file
-sudo cp novelcraft.desktop /usr/share/applications/
-
-# Hyprland window rules (opsional, tambahkan ke hyprland.conf)
-windowrulev2 = float, class:^(novelcraft)$
-windowrulev2 = size 1100 750, class:^(novelcraft)$
-windowrulev2 = center, class:^(novelcraft)$
-```
+Desktop entry dan aturan Hyprland belum tersedia; integrasi sistem merupakan
+bagian dari roadmap.
 
 ---
 
 ## 🗺️ Roadmap
 
-### Phase 1 — MVP ✅ *(sekarang)*
+### Phase 1 — MVP *(sedang dikerjakan)*
 > Fondasi aplikasi, bisa baca & tulis dasar.
-- [x] Project structure & Iced setup
+- [x] Project structure & Iced setup dasar
 - [x] Sidebar navigation
-- [x] Text editor (Writer)
-- [x] EPUB/TXT reader (Reader)
-- [x] File open/save dialog
-- [x] Library view dengan dummy data
-- [x] Dark theme
+- [x] Text editor dasar (Writer)
+- [x] Reader dasar untuk TXT dan Markdown UTF-8
+- [x] EPUB reader dasar berbasis teks
+- [x] Rendering Markdown dasar
+- [x] File open/save dialog untuk Writer
+- [x] Library dasar: daftar lokasi, pencarian, dan buka di Reader
+- [x] Dark theme Tokyo Night bawaan Iced
 
 ### Phase 2 — Novel Writing Suite *(target: v0.3)*
 > Fitur khusus untuk menulis novel secara serius.
 - [ ] Chapter management (tree view, drag & drop)
 - [ ] Character database (nama, deskripsi, relasi)
 - [ ] World-building notes (tempat, waktu, lore)
-- [ ] Word count target harian + progress bar
+- [ ] Word count target harian (target sementara per draft sudah tersedia)
 - [ ] Writing streak tracker (kalender)
-- [ ] Distraction-free / Zen mode (fullscreen, hide sidebar)
+- [ ] Distraction-free / Zen mode lengkap (fullscreen; mode fokus sidebar sudah tersedia)
 - [ ] Auto-save setiap 30 detik
 - [ ] SQLite storage untuk semua metadata
 
@@ -238,38 +388,24 @@ windowrulev2 = center, class:^(novelcraft)$
 
 ---
 
-## 📁 Struktur Project
+## 📁 Struktur Project Saat Ini
 
 ```
-novelcraft/
-├── Cargo.toml              # Dependencies & metadata
-├── README.md               # File ini
-├── LICENSE                 # MIT License
-├── novelcraft.desktop      # Desktop entry untuk launcher
-├── PKGBUILD                # AUR package (coming soon)
+NovelCraft/
+├── Cargo.toml       # Metadata dan dependensi Rust
+├── README.md        # Visi, status, dan roadmap
+├── AGENT.md         # Pedoman pengembangan
+├── mockup.html      # Referensi desain antarmuka
 ├── src/
-│   ├── main.rs             # Entry point, Iced app setup
-│   ├── app.rs              # App state & message handling
-│   ├── ui/
-│   │   ├── mod.rs
-│   │   ├── reader.rs       # UI membaca novel
-│   │   ├── writer.rs       # UI menulis novel
-│   │   ├── library.rs      # UI manajemen library
-│   │   └── settings.rs     # UI pengaturan
-│   ├── core/
-│   │   ├── mod.rs
-│   │   ├── parser.rs       # Parse EPUB/TXT/Markdown
-│   │   ├── storage.rs      # SQLite database layer
-│   │   ├── exporter.rs     # Export ke EPUB/PDF/DOCX
-│   │   └── hyprland.rs     # Hyprland IPC integration
-│   └── theme/
-│       ├── mod.rs
-│       └── colors.rs       # Custom theme & colors
-├── assets/
-│   ├── fonts/              # Embedded fonts (opsional)
-│   └── icons/              # App icons
-└── data/
-    └── novels.db           # SQLite database (runtime)
+│   ├── main.rs        # Jendela Iced, state, dan navigasi dasar
+│   ├── bookmarks.rs   # Penanda baca lokal
+│   ├── library.rs     # Daftar dan penyimpanan lokasi file
+│   ├── reader.rs      # Pembaca teks, navigasi, dan ukuran font
+│   ├── settings.rs    # Pengaturan tema lokal
+│   ├── shortcuts.rs   # Pemetaan shortcut keyboard
+│   ├── epub_reader.rs # Ekstraksi teks EPUB
+│   └── writer.rs      # Editor, hitungan kata, dan operasi file
+└── tests/fixtures/    # EPUB kecil untuk pengujian
 ```
 
 ---
@@ -288,6 +424,7 @@ Jika ingin berkontribusi di masa depan:
 5. Buat Pull Request
 
 ### Development Guidelines
+- GitHub Actions menjalankan `cargo check --all-targets` dan `cargo test --all-targets` di Linux pada push dan pull request. Workflow juga dapat dijalankan secara manual.
 - Gunakan `cargo clippy` sebelum commit
 - Format kode dengan `cargo fmt`
 - Test dengan `cargo test`
@@ -297,9 +434,10 @@ Jika ingin berkontribusi di masa depan:
 
 ## 📜 Lisensi
 
-Proyek ini dilisensikan di bawah [MIT License](LICENSE).
-
-Bebas digunakan, dimodifikasi, dan didistribusikan.
+README ini menyebut lisensi MIT, tetapi file `LICENSE` belum tersedia di repository.
+Ketentuan lisensi perlu dikonfirmasi dan ditambahkan oleh pemilik proyek.
+Dependensi `epub` yang digunakan untuk membaca EPUB berlisensi GPL-3.0;
+pemilik proyek perlu meninjau implikasinya terhadap rencana lisensi dan distribusi.
 
 ---
 

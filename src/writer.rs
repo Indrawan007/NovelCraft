@@ -13,6 +13,8 @@ pub struct Writer {
     target_input: String,
     project: Option<crate::project::Project>,
     chapter_title: String,
+    reference: crate::reference::Reference,
+    show_reference: bool,
     pending_chapter_rename: Option<usize>,
     chapter_rename_input: String,
     pending_chapter_remove: Option<usize>,
@@ -57,6 +59,8 @@ pub enum Message {
     Open,
     CreateProject,
     OpenProject,
+    ToggleReference,
+    Reference(crate::reference::Message),
     ProjectLoaded(Result<Option<crate::project::Project>, String>),
     ChapterTitleChanged(String),
     AddChapter,
@@ -94,11 +98,11 @@ pub enum Message {
 
 impl Writer {
     pub fn has_unsaved_changes(&self) -> bool {
-        self.dirty
+        self.dirty || self.reference.is_dirty()
     }
 
     pub fn is_busy(&self) -> bool {
-        self.busy
+        self.busy || self.reference.is_busy()
     }
 
     pub(crate) fn autosave_enabled(&self) -> bool {
@@ -113,7 +117,7 @@ impl Writer {
     }
 
     fn controls_blocked(&self) -> bool {
-        self.busy || self.pending_discard.is_some() || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
+        self.busy || self.reference.is_busy() || self.pending_discard.is_some() || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
             || self.pending_chapter_rename.is_some() || self.pending_chapter_remove.is_some() || self.pending_autosave_confirmation
     }
 
@@ -142,6 +146,9 @@ impl Writer {
             Message::PreviewLink(url) => {
                 self.preview_notice = Some(format!("Tautan tidak dibuka otomatis: {url}"));
             }
+            Message::NewDraft if !self.controls_blocked() && self.reference.is_dirty() => {
+                self.error = Some("Simpan atau batalkan perubahan catatan sebelum membuat draft baru.".into());
+            }
             Message::NewDraft | Message::Open if !self.controls_blocked() => {
                 let action = if matches!(message, Message::NewDraft) {
                     PendingAction::NewDraft
@@ -154,6 +161,24 @@ impl Writer {
                     return self.perform_action(action);
                 }
             }
+            Message::CreateProject | Message::OpenProject if !self.controls_blocked() && self.reference.is_dirty() => {
+                self.error = Some("Simpan atau batalkan perubahan catatan sebelum mengganti proyek.".into());
+            }
+            Message::ToggleReference if !self.controls_blocked() => {
+                if let Some(project) = &self.project {
+                    self.show_reference = !self.show_reference;
+                    if self.show_reference && !self.reference.is_loaded() {
+                        return self.reference.update(crate::reference::Message::Load(project.folder().to_owned())).map(Message::Reference);
+                    }
+                }
+            }
+            Message::Reference(message) => {
+                if self.busy || self.pending_discard.is_some() || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
+                    || self.pending_chapter_rename.is_some() || self.pending_chapter_remove.is_some() || self.pending_autosave_confirmation {
+                    return Task::none();
+                }
+                return self.reference.update(message).map(Message::Reference);
+            }
             Message::CreateProject | Message::OpenProject if !self.controls_blocked() => {
                 let create = matches!(message, Message::CreateProject);
                 self.busy = true;
@@ -165,6 +190,8 @@ impl Writer {
                 match result {
                     Ok(Some(project)) => {
                         self.project = Some(project);
+                        self.reference = crate::reference::Reference::default();
+                        self.show_reference = false;
                         self.chapter_title.clear();
                         self.error = None;
                     }
@@ -419,8 +446,12 @@ impl Writer {
         match action {
             PendingAction::NewDraft => {
                 let project = self.project.take();
+                let reference = std::mem::take(&mut self.reference);
+                let show_reference = self.show_reference;
                 *self = Self::default();
                 self.project = project;
+                self.reference = reference;
+                self.show_reference = show_reference;
                 Task::none()
             }
             PendingAction::OpenChapter(path) => {
@@ -585,7 +616,9 @@ impl Writer {
             view = view.push(text(notice).size(14));
         }
 
-        let editing_area: Element<'_, Message> = if self.show_preview {
+        let editing_area: Element<'_, Message> = if self.show_reference {
+            self.reference.view().map(Message::Reference)
+        } else if self.show_preview {
             let preview_content = markdown::view(
                 &self.preview_items,
                 markdown::Settings::with_text_size(16),
@@ -623,6 +656,10 @@ impl Writer {
         ].spacing(8).width(220).height(Length::Fill);
         if let Some(project) = &self.project {
             project_panel = project_panel.push(text(project.folder().display().to_string()).size(12));
+            let mut reference = button(if self.show_reference { "Kembali ke editor" } else { "Karakter & dunia" });
+            if !self.controls_blocked() { reference = reference.on_press(Message::ToggleReference); }
+            project_panel = project_panel.push(reference);
+            if self.reference.is_dirty() { project_panel = project_panel.push(text("Catatan belum disimpan").size(12)); }
             let mut title = text_input("Judul chapter", &self.chapter_title).size(13);
             let mut add = button("Chapter baru");
             let mut attach = button("Tambah file");
@@ -1076,6 +1113,29 @@ mod tests {
         assert!(!writer.autosave_enabled());
         let _ = writer.update(Message::NewDraft);
         assert!(!writer.autosave_enabled());
+    }
+
+    #[tokio::test]
+    async fn unsaved_reference_blocks_project_reset_and_window_close_guard() {
+        let dir = std::env::temp_dir().join(format!("novelcraft-reference-writer-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let project = crate::project::create(dir.clone()).await.unwrap();
+        let mut writer = Writer::default();
+        let _ = writer.update(Message::ProjectLoaded(Ok(Some(project))));
+        let _ = writer.update(Message::ToggleReference);
+        assert!(writer.is_busy());
+        let _ = writer.update(Message::Reference(crate::reference::Message::Loaded(Ok(vec![]))));
+        let _ = writer.update(Message::Reference(crate::reference::Message::New(crate::reference::Kind::Character)));
+        let _ = writer.update(Message::Reference(crate::reference::Message::Name("Lintang".into())));
+        assert!(writer.has_unsaved_changes());
+        let _ = writer.update(Message::NewDraft);
+        assert!(writer.has_unsaved_changes());
+        assert!(writer.project.is_some());
+        let _ = writer.update(Message::OpenProject);
+        assert!(!writer.is_busy());
+        let _ = writer.update(Message::Reference(crate::reference::Message::CancelEdit));
+        assert!(!writer.has_unsaved_changes());
+        tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 
     #[test]

@@ -3,6 +3,7 @@ mod epub_reader;
 mod library;
 mod reader;
 mod project;
+mod reference;
 mod settings;
 mod shortcuts;
 #[path = "mockup_style.rs"]
@@ -505,7 +506,7 @@ impl NovelCraft {
                 "Operasi file Reader, Writer, Library, atau Settings masih berlangsung. Selesaikan dialog atau tunggu proses selesai sebelum menutup aplikasi.",
             ));
         } else if self.writer.has_unsaved_changes() {
-            content = content.push(text("Draft Writer memiliki perubahan yang belum disimpan."));
+            content = content.push(text("Draft Writer atau catatan memiliki perubahan yang belum disimpan."));
             content = content.push(
                 row![
                     button("Kembali ke Writer").on_press(Message::ReturnToWriter),

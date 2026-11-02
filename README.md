@@ -157,6 +157,24 @@ menutup aplikasi. Simpan draft secara manual atau aktifkan auto-save per file; p
 melindungi dari penghentian paksa, crash, atau kehilangan daya. Dialog file
 Wayland memerlukan portal desktop yang berfungsi.
 
+**Karakter & dunia** di panel proyek membuka catatan karakter, tempat, waktu,
+dan lore. Catatan memiliki nama dan deskripsi; karakter juga memiliki kolom
+relasi berupa teks bebas (belum berupa relasi antar-entri). Tambah, pilih, edit,
+simpan, dan hapus dengan konfirmasi. Kolom saat ini satu baris. Simpan atau
+batalkan perubahan catatan sebelum mengganti proyek atau membuat draft baru;
+penutupan jendela juga memperingatkan tentang perubahan catatan yang belum disimpan.
+
+Catatan disimpan dalam `.novelcraft.sqlite3` di folder proyek, dibuat saat fitur
+pertama dibuka. File database lain, symbolic link, dan versi yang tidak didukung
+ditolak tanpa migrasi. SQLite memakai transaksi dan nomor revisi per catatan;
+edit atau hapus yang sudah usang ditolak, lalu batalkan edit dan muat ulang.
+Membuka atau menulis catatan berjalan di worker. Jika pembuatan database gagal,
+file kosong atau belum lengkap dapat tertinggal dan perlu diperiksa. Simpan backup
+folder proyek; jangan memindahkan database ketika aplikasi sedang membukanya.
+Chapter tetap file Markdown dan daftar chapter tetap `.novelcraft.json`; settings,
+Library, dan bookmark juga masih JSON, jadi migrasi semua metadata ke SQLite belum
+selesai. Pemeriksaan path bukan penguncian filesystem dan tidak menutup semua race.
+
 **Mode Zen** di Writer menyembunyikan navigasi, panel chapter, dan toolbar,
 serta meminta fullscreen. **Keluar Zen** mengembalikan tampilan dan hanya
 meminta mode jendela jika Zen yang mengaktifkan fullscreen. Fullscreen yang
@@ -505,13 +523,13 @@ file. Aturan dan integrasi Hyprland belum tersedia.
 ### Phase 2 — Novel Writing Suite *(target: v0.3)*
 > Fitur khusus untuk menulis novel secara serius.
 - [ ] Chapter management lengkap (operasi daftar dan penambahan file lokal tersedia; tree view dan drag & drop belum)
-- [ ] Character database (nama, deskripsi, relasi)
-- [ ] World-building notes (tempat, waktu, lore)
+- [ ] Character database lengkap (nama, deskripsi dan relasi teks bebas sudah tersedia; relasi terstruktur belum)
+- [x] World-building notes dasar: tempat, waktu, lore (catatan teks satu baris)
 - [ ] Word count target harian (target sementara per draft sudah tersedia)
 - [ ] Writing streak tracker (kalender)
 - [x] Mode Zen Writer: editor minimal dan fullscreen dengan pemulihan mode sebelumnya (bergantung compositor)
 - [x] Auto-save setiap 30 detik untuk file bernama (opt-in per file; tanpa pemulihan draft tanpa nama)
-- [ ] SQLite storage untuk semua metadata
+- [ ] SQLite storage untuk semua metadata (baru karakter dan catatan world-building; metadata lama masih JSON)
 
 ### Phase 3 — Advanced Reader *(target: v0.5)*
 > Pengalaman membaca yang lebih baik.

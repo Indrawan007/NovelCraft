@@ -53,16 +53,20 @@ jobs:
           exec > "$RUNNER_TEMP/visual-step.log" 2>&1
           set -E
           on_error() {
-            while IFS= read -r line; do printf '::error title=Visual failure::%s\n' "$line" >&3; done < <(tail -n 30 "$RUNNER_TEMP/visual-step.log")
+            printf '::error title=Visual stage::%s\n' "$stage" >&3
+            while IFS= read -r line; do printf '::error title=Visual failure::%s\n' "$line" >&3; done < <(tail -n 5 "$RUNNER_TEMP/visual-step.log")
             if [ -f "$RUNNER_TEMP/gui.log" ]; then
               while IFS= read -r line; do printf '::error title=GUI log::%s\n' "$line" >&3; done < "$RUNNER_TEMP/gui.log"
             fi
           }
           trap on_error ERR
+          stage=install
           sudo apt-get install -y xvfb xdotool imagemagick mesa-vulkan-drivers
+          stage=build
           cargo build --locked
           export WINIT_UNIX_BACKEND=x11
           export XDG_CONFIG_HOME="$RUNNER_TEMP/config" XDG_DATA_HOME="$RUNNER_TEMP/data"
+          stage=xvfb
           xvfb-run -a -s '-screen 0 1100x750x24' bash -c '
             target/debug/novelcraft > "$RUNNER_TEMP/gui.log" 2>&1 &
             app=$!

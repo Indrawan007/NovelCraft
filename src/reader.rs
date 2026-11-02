@@ -1543,10 +1543,13 @@ mod tests {
         assert!(app.reader.tools_visible());
         drop(app.view());
         let _ = app.update(AppMessage::Reader(Message::CancelRemoveBookmark));
+        // The confirmation changes the viewport and invalidates its measurement.
+        let revision = app.reader.scroll_revision;
+        let _ = app.update(AppMessage::Reader(Message::Scrolled { revision, percent: Some(52) }));
         let _ = app.update(AppMessage::Reader(Message::ToggleTools));
         assert!(!app.reader.tools_visible());
         assert_eq!(app.reader.section, 1);
-        assert_eq!(app.reader.restored_scroll_fallback, Some(65));
+        assert_eq!(app.reader.restored_scroll_fallback, Some(52));
         drop(app.view());
     }
 

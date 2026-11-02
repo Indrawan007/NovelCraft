@@ -32,7 +32,10 @@ jobs:
           status=$?
           cat "$RUNNER_TEMP/novelcraft-tests.log"
           if [ "$status" -ne 0 ]; then
-            diagnostic=$(tail -n 100 "$RUNNER_TEMP/novelcraft-tests.log")
+            diagnostic=$(sed -n '/^failures:/,$p' "$RUNNER_TEMP/novelcraft-tests.log" | head -c 3000)
+            if [ -z "$diagnostic" ]; then
+              diagnostic=$(tail -n 20 "$RUNNER_TEMP/novelcraft-tests.log" | head -c 3000)
+            fi
             diagnostic=${diagnostic//'%'/'%25'}
             diagnostic=${diagnostic//$'\r'/'%0D'}
             diagnostic=${diagnostic//$'\n'/'%0A'}

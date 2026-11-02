@@ -993,6 +993,29 @@ mod tests {
     }
 
     #[test]
+    fn reader_focus_invalidates_stale_scroll_measurement_without_changing_document() {
+        use crate::{Message as AppMessage, NovelCraft, Page};
+        let mut app = NovelCraft::default();
+        app.page = Page::Reader;
+        app.reader = Reader { path: Some("book.epub".into()), sections: vec!["satu".into(), "dua".into()], section: 1, is_epub: true, scroll_percent: Some(75), ..Reader::default() };
+        let revision = app.reader.scroll_revision;
+        let _ = app.update(AppMessage::ToggleFocusMode);
+        assert!(app.focus_mode);
+        assert_eq!(app.reader.section, 1);
+        assert_eq!(app.reader.path.as_deref(), Some(Path::new("book.epub")));
+        assert_eq!(app.reader.scroll_percent, None);
+        let _ = app.update(AppMessage::Reader(Message::Scrolled { revision, percent: Some(75) }));
+        assert_eq!(app.reader.scroll_percent, None);
+        let new_revision = app.reader.scroll_revision;
+        let _ = app.update(AppMessage::Reader(Message::Scrolled { revision: new_revision, percent: Some(40) }));
+        assert_eq!(app.reader.scroll_percent, Some(40));
+        let _ = app.update(AppMessage::ToggleFocusMode);
+        assert!(!app.focus_mode);
+        assert_eq!(app.reader.scroll_percent, None);
+        assert_eq!(app.reader.section, 1);
+    }
+
+    #[test]
     fn section_shortcuts_respect_page_busy_confirmation_and_document_type() {
         use crate::{Message as AppMessage, NovelCraft, Page};
         use crate::shortcuts::Shortcut;

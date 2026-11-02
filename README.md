@@ -57,7 +57,9 @@ Target menghitung seluruh isi draft berdasarkan pemisah whitespace, termasuk
 teks yang sudah ada dan markup Markdown. Ini bukan target harian; mengubah target
 tidak mengubah atau menyimpan isi file. Kosongkan kolom untuk menyembunyikan target.
 Reader dapat membuka file EPUB, TXT/Markdown UTF-8, menggulir teks, dan mengatur
-ukuran font. Posisi gulir ditampilkan untuk dokumen teks atau bagian EPUB saat
+ukuran font. **Mode fokus** di Reader juga menyembunyikan sidebar tanpa fullscreen;
+berpindah halaman mengakhirinya. Mengubah lebar area baca dapat menggeser posisi
+teks karena pembungkusan ulang; indikator gulir menjadi `—` hingga terukur lagi. Posisi gulir ditampilkan untuk dokumen teks atau bagian EPUB saat
 konten dapat digulir; tanda `—` berarti posisi belum tersedia. Angka tersebut
 adalah posisi scrollbar, bukan persentase buku yang telah dibaca. Gunakan tombol
 **Simpan posisi** dan **Pulihkan posisi** untuk menyimpan atau memuat penanda
@@ -154,6 +156,7 @@ Daftar di bawah ini adalah **target MVP**, bukan fitur yang sudah selesai.
 - [x] Buka EPUB sebagai teks, lompat ke bagian spine, dan cari bagian berdasarkan teks
 - [x] Render Markdown dasar dan lihat sumber
 - [x] Atur ukuran font (A+/A-)
+- [x] Mode fokus Reader (sembunyikan sidebar; tanpa fullscreen)
 - [x] Scroll reading dan indikator posisi gulir per dokumen/bagian
 - [x] Simpan, pulihkan, dan hapus satu penanda posisi manual per file antar-sesi
 - [x] Dark theme (Tokyo Night)

@@ -179,6 +179,9 @@ impl NovelCraft {
             }
             Message::ReturnToWriter => {
                 self.pending_close = None;
+                if self.page != Page::Writer {
+                    self.focus_mode = false;
+                }
                 self.page = Page::Writer;
                 Task::none()
             }
@@ -190,10 +193,10 @@ impl NovelCraft {
                 if self.page == Page::Reader && page != Page::Reader {
                     self.reader.invalidate_scroll_position();
                 }
-                self.page = page;
-                if page != Page::Writer {
+                if page != self.page {
                     self.focus_mode = false;
                 }
+                self.page = page;
                 if page == Page::Reader && self.pending_close.is_none() {
                     self.reader.take_restore_task().map(Message::Reader)
                 } else if page == Page::Library {
@@ -202,8 +205,12 @@ impl NovelCraft {
                     Task::none()
                 }
             }
-            Message::ToggleFocusMode if self.page == Page::Writer && self.pending_close.is_none() => {
+            Message::ToggleFocusMode if matches!(self.page, Page::Reader | Page::Writer) && self.pending_close.is_none() => {
                 self.focus_mode = !self.focus_mode;
+                // Changing the reading width changes wrapping and scroll measurements.
+                if self.page == Page::Reader {
+                    self.reader.invalidate_scroll_position();
+                }
                 Task::none()
             }
             Message::ToggleFocusMode => Task::none(),
@@ -398,7 +405,7 @@ impl NovelCraft {
             .padding(32);
 
         let mut topbar_content = row![text("novelcraft").size(18)].spacing(16);
-        if self.page == Page::Writer {
+        if matches!(self.page, Page::Reader | Page::Writer) {
             let label = if self.focus_mode { "Keluar mode fokus" } else { "Mode fokus" };
             topbar_content = topbar_content.push(button(label).on_press(Message::ToggleFocusMode));
         }
@@ -417,7 +424,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn focus_mode_is_writer_only_and_keeps_unsaved_draft() {
+    fn writer_focus_mode_keeps_unsaved_draft_and_is_unavailable_in_library() {
         let mut app = NovelCraft::default();
         let _ = app.update(Message::ToggleFocusMode);
         assert!(!app.focus_mode);
@@ -442,6 +449,34 @@ mod tests {
         assert!(!app.focus_mode);
         let _ = app.update(Message::Shortcut(shortcuts::Shortcut::Writer));
         assert_eq!(app.page, Page::Writer);
+        assert!(!app.focus_mode);
+    }
+
+    #[test]
+    fn reader_focus_mode_resets_on_page_change_but_not_same_page_navigation() {
+        let mut app = NovelCraft::default();
+        let _ = app.update(Message::Navigate(Page::Reader));
+        let _ = app.update(Message::ToggleFocusMode);
+        assert!(app.focus_mode);
+        drop(app.view());
+        let _ = app.update(Message::Navigate(Page::Reader));
+        assert!(app.focus_mode);
+        app.pending_close = Some(window::Id::unique());
+        let _ = app.update(Message::ToggleFocusMode);
+        assert!(app.focus_mode);
+        let _ = app.update(Message::CancelClose);
+        assert!(app.focus_mode);
+        let _ = app.update(Message::Shortcut(shortcuts::Shortcut::Writer));
+        assert_eq!(app.page, Page::Writer);
+        assert!(!app.focus_mode);
+        let _ = app.update(Message::Navigate(Page::Reader));
+        let _ = app.update(Message::ToggleFocusMode);
+        assert!(app.focus_mode);
+        let _ = app.update(Message::ReturnToWriter);
+        assert_eq!(app.page, Page::Writer);
+        assert!(!app.focus_mode);
+        let _ = app.update(Message::Navigate(Page::Settings));
+        let _ = app.update(Message::ToggleFocusMode);
         assert!(!app.focus_mode);
     }
 

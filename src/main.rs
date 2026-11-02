@@ -267,7 +267,7 @@ impl NovelCraft {
             Message::ConfirmClose => Task::none(),
             Message::CancelClose => {
                 self.pending_close = None;
-                if self.page == Page::Reader && !self.reader.is_busy() {
+                if self.page == Page::Reader && !self.reader.markdown_loading() {
                     self.reader.take_restore_task().map(Message::Reader)
                 } else {
                     Task::none()
@@ -295,7 +295,7 @@ impl NovelCraft {
                     self.focus_mode = false;
                 }
                 self.page = page;
-                if page == Page::Reader && self.pending_close.is_none() && !self.reader.is_busy() {
+                if page == Page::Reader && self.pending_close.is_none() && !self.reader.markdown_loading() {
                     Task::batch([exit_zen, self.reader.take_restore_task().map(Message::Reader)])
                 } else if page == Page::Library {
                     Task::batch([
@@ -467,7 +467,7 @@ impl NovelCraft {
             Message::Reader(message) => {
                 let bookmark_saved = matches!(&message, reader::Message::BookmarkSaved(Ok(_)) | reader::Message::BookmarkRemoved(Ok(_)));
                 let task = self.reader.update(message).map(Message::Reader);
-                let restore = if self.page == Page::Reader && self.pending_close.is_none() && !self.reader.is_busy() {
+                let restore = if self.page == Page::Reader && self.pending_close.is_none() && !self.reader.markdown_loading() {
                     self.reader.take_restore_task().map(Message::Reader)
                 } else {
                     Task::none()
@@ -596,8 +596,16 @@ impl NovelCraft {
         }
 
         scrollable(
-            container(container(content).max_width(760).width(Length::Fill))
-                .width(Length::Fill).center_x(Length::Fill).padding([36, 24]),
+            container(
+                container(content)
+                    .max_width(760)
+                    .width(Length::Fill)
+                    .height(Length::Shrink),
+            )
+            .width(Length::Fill)
+            .height(Length::Shrink)
+            .center_x(Length::Fill)
+            .padding([36, 24]),
         )
         .height(Length::Fill)
         .into()

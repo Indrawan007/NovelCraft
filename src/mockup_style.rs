@@ -54,13 +54,6 @@ pub fn card(theme: &Theme) -> container::Style {
     })
 }
 
-pub fn setting_row(theme: &Theme) -> container::Style {
-    container::Style::default().border(Border {
-        color: theme.palette().text.scale_alpha(0.10), width: 1.0,
-        ..Border::default()
-    })
-}
-
 pub fn navigation(theme: &Theme, status: button::Status, selected: bool) -> button::Style {
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {

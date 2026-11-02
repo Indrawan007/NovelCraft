@@ -28,6 +28,7 @@ pub struct Reader {
     markdown_items: Vec<markdown::Item>,
     markdown_revision: u64,
     markdown_ready: bool,
+    markdown_loading: bool,
     show_source: bool,
     link_notice: Option<String>,
     font_size: u16,
@@ -66,6 +67,7 @@ impl Default for Reader {
             markdown_items: Vec::new(),
             markdown_revision: 0,
             markdown_ready: false,
+            markdown_loading: false,
             show_source: false,
             link_notice: None,
             font_size: DEFAULT_READER_FONT_SIZE,
@@ -134,6 +136,10 @@ impl Reader {
 
     pub fn is_busy(&self) -> bool {
         self.busy
+    }
+
+    pub(crate) fn markdown_loading(&self) -> bool {
+        self.markdown_loading
     }
 
     fn controls_blocked(&self) -> bool {
@@ -231,6 +237,7 @@ impl Reader {
         self.markdown_items.clear();
         self.markdown_revision = self.markdown_revision.wrapping_add(1);
         self.markdown_ready = false;
+        self.markdown_loading = false;
         self.show_source = false;
         self.link_notice = None;
         self.path = Some(path);
@@ -259,6 +266,7 @@ impl Reader {
         let source = self.sections.first().cloned().unwrap_or_default();
         let revision = self.markdown_revision;
         self.busy = true;
+        self.markdown_loading = true;
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || markdown::parse(&source).collect::<Vec<_>>())
@@ -313,6 +321,7 @@ impl Reader {
             }
             Message::MarkdownParsed(revision, result) if revision == self.markdown_revision => {
                 self.busy = false;
+                self.markdown_loading = false;
                 match result {
                     Ok(items) => {
                         self.markdown_items = items;
@@ -506,7 +515,7 @@ impl Reader {
             view = view.push(row![button("Hapus penanda").on_press(Message::ConfirmRemoveBookmark), button("Batal").on_press(Message::CancelRemoveBookmark)].spacing(12));
         }
         if self.busy {
-            view = view.push(text(if self.is_markdown && !self.markdown_ready {
+            view = view.push(text(if self.markdown_loading {
                 "Menyiapkan tampilan Markdown…"
             } else {
                 "Memproses file atau penanda…"
@@ -518,9 +527,9 @@ impl Reader {
         if !font_settings_ready { view = view.push(text(font_status).size(12)); }
 
         let contents = self.sections.get(self.section).map(String::as_str).unwrap_or("");
-        let content: Element<'_, Message> = if self.is_markdown && !self.show_source && self.busy && !self.markdown_ready {
+        let content: Element<'_, Message> = if self.markdown_loading && !self.show_source {
             container(text("Menyiapkan tampilan Markdown…").size(14).color(crate::mockup_style::muted(theme)))
-                .width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into()
+                .width(Length::Fill).padding(24).center_x(Length::Fill).into()
         } else if self.is_markdown && !self.show_source && self.markdown_ready {
             markdown::view(
                 &self.markdown_items,

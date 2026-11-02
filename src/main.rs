@@ -75,7 +75,7 @@ fn shortcut_event(event: iced::Event, status: event::Status, _: window::Id) -> O
         return None;
     }
     if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
-        if key.as_ref() == &keyboard::Key::Named(keyboard::key::Named::Escape)
+        if key.as_ref() == keyboard::Key::Named(keyboard::key::Named::Escape)
             && modifiers == keyboard::Modifiers::empty()
         {
             return Some(Message::ExitZen);

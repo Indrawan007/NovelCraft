@@ -642,7 +642,7 @@ impl Writer {
             content = content.push(text(error).size(12).color(theme.palette().danger));
         }
         if let Some(notice) = &self.activity_notice {
-            content = content.push(text(notice).size(12).color(mockup_style::muted(theme)));
+            content = content.push(text(notice).size(12).color(crate::mockup_style::muted(theme)));
         }
         content.push(canvas).into()
     }

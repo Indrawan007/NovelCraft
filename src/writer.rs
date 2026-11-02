@@ -529,7 +529,7 @@ impl Writer {
 
     pub fn zen_view<'a>(&'a self, theme: &Theme) -> Element<'a, Message> {
         // Show normal controls whenever a confirmation, operation or error needs attention.
-        if self.controls_blocked() || self.error.is_some() {
+        if self.controls_blocked() || self.error.is_some() || self.activity_notice.is_some() {
             return self.view(theme);
         }
         let editor = text_editor(&self.content)

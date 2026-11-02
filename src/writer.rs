@@ -170,6 +170,9 @@ impl Writer {
                     self.error = Some("Simpan atau batalkan perubahan catatan dan target sebelum menutup menu.".into());
                 } else {
                     self.show_tools = !self.show_tools;
+                    if self.error.as_deref() == Some("Simpan atau batalkan perubahan catatan dan target sebelum menutup menu.") {
+                        self.error = None;
+                    }
                 }
             }
             Message::TogglePreview if !self.controls_blocked() => {
@@ -1181,7 +1184,7 @@ mod tests {
         assert!(writer.tools_visible()); assert!(writer.error.is_some());
         let _ = writer.update(Message::Reference(crate::reference::Message::CancelEdit));
         let _ = writer.update(Message::ToggleTools);
-        assert!(!writer.tools_visible());
+        assert!(!writer.tools_visible()); assert!(writer.error.is_none());
     }
 
     #[test]

@@ -162,7 +162,7 @@ async fn run_change(folder: PathBuf, change: Change) -> Result<Vec<Entry>, Strin
     tokio::task::spawn_blocking(move || change_entry(&folder, change)).await.map_err(|e| format!("Proses database gagal: {e}"))?
 }
 
-fn connection(folder: &Path) -> Result<Connection, String> {
+pub(crate) fn connection(folder: &Path) -> Result<Connection, String> {
     let path = folder.join(DB_NAME);
     let mut options = std::fs::OpenOptions::new(); options.write(true).create_new(true);
     #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
@@ -184,8 +184,18 @@ fn connection(folder: &Path) -> Result<Connection, String> {
     } else {
         let app: i64 = db.query_row("PRAGMA application_id", [], |r| r.get(0)).map_err(|e| format!("Database tidak valid: {e}"))?;
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(|e| format!("Database tidak valid: {e}"))?;
-        if app != APP_ID || version != 1 { return Err("Database bukan database catatan NovelCraft atau versinya tidak didukung; file tidak diubah.".into()); }
+        if app != APP_ID || !(1..=2).contains(&version) { return Err("Database bukan database catatan NovelCraft atau versinya tidak didukung; file tidak diubah.".into()); }
     }
+    // Migrate under a write lock, rechecking the version to handle concurrent opens.
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| format!("Gagal memeriksa versi database: {e}"))?;
+    let version: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(|e| format!("Database tidak valid: {e}"))?;
+    if version == 1 {
+        tx.execute_batch("CREATE TABLE writing_days (day TEXT PRIMARY KEY, net_words INTEGER NOT NULL); CREATE TABLE writing_settings (key TEXT PRIMARY KEY, value INTEGER NOT NULL); PRAGMA user_version=2;")
+            .map_err(|e| format!("Gagal memperbarui database: {e}"))?;
+    } else if version != 2 {
+        return Err("Versi database tidak didukung; file tidak diubah.".into());
+    }
+    tx.commit().map_err(|e| format!("Gagal memperbarui database: {e}"))?;
     Ok(db)
 }
 fn load_entries(db: &Connection) -> Result<Vec<Entry>, String> {
@@ -277,6 +287,19 @@ mod tests {
         assert_eq!(load(&dir).unwrap(), updated);
         assert!(change_entry(&dir, Change::Delete(entry.id, updated[0].revision)).unwrap().is_empty());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn upgrades_version_one_without_losing_notes() {
+        let dir = dir(); std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(DB_NAME);
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch(&format!("PRAGMA application_id={APP_ID}; PRAGMA user_version=1; CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT, revision INTEGER NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, relations TEXT NOT NULL); INSERT INTO entries(revision,kind,name,description,relations) VALUES(1,'character','Nama','Detail','Relasi');")).unwrap();
+        drop(db);
+        let entries = load(&dir).unwrap(); assert_eq!(entries[0].name, "Nama"); assert_eq!(entries[0].relations, "Relasi");
+        let db = connection(&dir).unwrap();
+        assert_eq!(db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 2);
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM writing_days", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        drop(db); std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn refuses_foreign_database_and_invalid_form() {

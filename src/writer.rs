@@ -15,6 +15,10 @@ pub struct Writer {
     chapter_title: String,
     reference: crate::reference::Reference,
     show_reference: bool,
+    activity: crate::activity::Activity,
+    show_activity: bool,
+    activity_pending: bool,
+    activity_notice: Option<String>,
     pending_chapter_rename: Option<usize>,
     chapter_rename_input: String,
     pending_chapter_remove: Option<usize>,
@@ -61,6 +65,10 @@ pub enum Message {
     OpenProject,
     ToggleReference,
     Reference(crate::reference::Message),
+    ToggleActivity,
+    Activity(crate::activity::Message),
+    ActivityRecorded(PathBuf, Result<crate::activity::Report, String>),
+    DismissActivityNotice,
     ProjectLoaded(Result<Option<crate::project::Project>, String>),
     ChapterTitleChanged(String),
     AddChapter,
@@ -98,11 +106,11 @@ pub enum Message {
 
 impl Writer {
     pub fn has_unsaved_changes(&self) -> bool {
-        self.dirty || self.reference.is_dirty()
+        self.dirty || self.reference.is_dirty() || self.activity.is_dirty()
     }
 
     pub fn is_busy(&self) -> bool {
-        self.busy || self.reference.is_busy()
+        self.busy || self.reference.is_busy() || self.activity.is_busy() || self.activity_pending
     }
 
     pub(crate) fn autosave_enabled(&self) -> bool {
@@ -117,7 +125,7 @@ impl Writer {
     }
 
     fn controls_blocked(&self) -> bool {
-        self.busy || self.reference.is_busy() || self.pending_discard.is_some() || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
+        self.busy || self.reference.is_busy() || self.activity.is_busy() || self.activity_pending || self.pending_discard.is_some() || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
             || self.pending_chapter_rename.is_some() || self.pending_chapter_remove.is_some() || self.pending_autosave_confirmation
     }
 
@@ -146,8 +154,8 @@ impl Writer {
             Message::PreviewLink(url) => {
                 self.preview_notice = Some(format!("Tautan tidak dibuka otomatis: {url}"));
             }
-            Message::NewDraft if !self.controls_blocked() && self.reference.is_dirty() => {
-                self.error = Some("Simpan atau batalkan perubahan catatan sebelum membuat draft baru.".into());
+            Message::NewDraft if !self.controls_blocked() && (self.reference.is_dirty() || self.activity.is_dirty()) => {
+                self.error = Some("Simpan atau batalkan perubahan catatan dan target sebelum membuat draft baru.".into());
             }
             Message::NewDraft | Message::Open if !self.controls_blocked() => {
                 let action = if matches!(message, Message::NewDraft) {
@@ -161,19 +169,45 @@ impl Writer {
                     return self.perform_action(action);
                 }
             }
-            Message::CreateProject | Message::OpenProject if !self.controls_blocked() && self.reference.is_dirty() => {
-                self.error = Some("Simpan atau batalkan perubahan catatan sebelum mengganti proyek.".into());
+            Message::CreateProject | Message::OpenProject if !self.controls_blocked() && (self.reference.is_dirty() || self.activity.is_dirty()) => {
+                self.error = Some("Simpan atau batalkan perubahan catatan dan target sebelum mengganti proyek.".into());
             }
             Message::ToggleReference if !self.controls_blocked() => {
                 if let Some(project) = &self.project {
                     self.show_reference = !self.show_reference;
+                    if self.show_reference { self.show_activity = false; }
                     if self.show_reference && !self.reference.is_loaded() {
                         return self.reference.update(crate::reference::Message::Load(project.folder().to_owned())).map(Message::Reference);
                     }
                 }
             }
+            Message::ToggleActivity if !self.controls_blocked() => {
+                if let Some(project) = &self.project {
+                    self.show_activity = !self.show_activity;
+                    if self.show_activity { self.show_reference = false; }
+                    if self.show_activity && !self.activity.is_dirty() {
+                        return self.activity.update(crate::activity::Message::Load(project.folder().to_owned())).map(Message::Activity);
+                    }
+                }
+            }
+            Message::Activity(message) => {
+                if self.busy || self.reference.is_busy() || self.activity_pending || self.pending_discard.is_some()
+                    || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
+                    || self.pending_chapter_rename.is_some() || self.pending_chapter_remove.is_some() || self.pending_autosave_confirmation {
+                    return Task::none();
+                }
+                return self.activity.update(message).map(Message::Activity);
+            }
+            Message::ActivityRecorded(folder, result) => {
+                self.activity_pending = false;
+                match result {
+                    Ok(report) => { self.activity.apply_recorded(folder, report); }
+                    Err(error) => self.activity_notice = Some(format!("File berhasil disimpan, tetapi statistik tidak tercatat: {error}")),
+                }
+            }
+            Message::DismissActivityNotice => self.activity_notice = None,
             Message::Reference(message) => {
-                if self.busy || self.pending_discard.is_some() || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
+                if self.busy || self.activity.is_busy() || self.activity_pending || self.pending_discard.is_some() || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
                     || self.pending_chapter_rename.is_some() || self.pending_chapter_remove.is_some() || self.pending_autosave_confirmation {
                     return Task::none();
                 }
@@ -192,6 +226,9 @@ impl Writer {
                         self.project = Some(project);
                         self.reference = crate::reference::Reference::default();
                         self.show_reference = false;
+                        self.activity = crate::activity::Activity::default();
+                        self.show_activity = false;
+                        self.activity_notice = None;
                         self.chapter_title.clear();
                         self.error = None;
                     }
@@ -369,11 +406,24 @@ impl Writer {
                 let automatic = std::mem::take(&mut self.autosave_in_flight);
                 match result {
                     Ok(Some((path, contents))) => {
+                        // Count only successfully saved changes to the same indexed chapter.
+                        let change = if self.dirty && self.path.as_ref() == Some(&path) {
+                            self.project.as_ref().and_then(|project| {
+                                let is_chapter = (0..project.chapters().len()).any(|i| project.chapter_path(i).as_ref() == Some(&path));
+                                self.saved_contents.as_ref().filter(|_| is_chapter)
+                                    .map(|before| (project.folder().to_owned(), word_delta(before, &contents)))
+                            })
+                        } else { None };
                         if self.autosave_path.as_ref().is_some_and(|enabled| enabled != &path) { self.autosave_path = None; }
                         self.path = Some(path);
                         self.saved_contents = Some(contents);
                         self.dirty = false;
                         self.error = None;
+                        if let Some((folder, delta)) = change.filter(|(_, delta)| *delta != 0) {
+                            self.activity_pending = true;
+                            let result_folder = folder.clone();
+                            return Task::perform(crate::activity::record_async(folder, delta), move |result| Message::ActivityRecorded(result_folder.clone(), result));
+                        }
                     }
                     Ok(None) => { if automatic { self.autosave_path = None; } }
                     Err(error) => {
@@ -448,10 +498,16 @@ impl Writer {
                 let project = self.project.take();
                 let reference = std::mem::take(&mut self.reference);
                 let show_reference = self.show_reference;
+                let activity = std::mem::take(&mut self.activity);
+                let show_activity = self.show_activity;
+                let activity_notice = self.activity_notice.take();
                 *self = Self::default();
                 self.project = project;
                 self.reference = reference;
                 self.show_reference = show_reference;
+                self.activity = activity;
+                self.show_activity = show_activity;
+                self.activity_notice = activity_notice;
                 Task::none()
             }
             PendingAction::OpenChapter(path) => {
@@ -606,6 +662,10 @@ impl Writer {
         if self.autosave_enabled() {
             view = view.push(text("Auto-save aktif untuk file ini (setiap 30 detik); penyimpanan gagal akan menonaktifkannya.").size(12));
         }
+        if let Some(notice) = &self.activity_notice {
+            view = view.push(text(notice).size(14));
+            view = view.push(button("Tutup peringatan statistik").on_press(Message::DismissActivityNotice));
+        }
         if let Some(error) = &self.error {
             view = view.push(text(error));
         }
@@ -618,6 +678,8 @@ impl Writer {
 
         let editing_area: Element<'_, Message> = if self.show_reference {
             self.reference.view().map(Message::Reference)
+        } else if self.show_activity {
+            self.activity.view().map(Message::Activity)
         } else if self.show_preview {
             let preview_content = markdown::view(
                 &self.preview_items,
@@ -659,6 +721,10 @@ impl Writer {
             let mut reference = button(if self.show_reference { "Kembali ke editor" } else { "Karakter & dunia" });
             if !self.controls_blocked() { reference = reference.on_press(Message::ToggleReference); }
             project_panel = project_panel.push(reference);
+            let mut activity = button(if self.show_activity { "Kembali ke editor" } else { "Target & streak" });
+            if !self.controls_blocked() { activity = activity.on_press(Message::ToggleActivity); }
+            project_panel = project_panel.push(activity);
+            if self.activity.is_dirty() { project_panel = project_panel.push(text("Target belum disimpan").size(12)); }
             if self.reference.is_dirty() { project_panel = project_panel.push(text("Catatan belum disimpan").size(12)); }
             let mut title = text_input("Judul chapter", &self.chapter_title).size(13);
             let mut add = button("Chapter baru");
@@ -711,6 +777,12 @@ impl Writer {
         }
         view.into()
     }
+}
+
+fn word_delta(before: &str, after: &str) -> i64 {
+    let before = i64::try_from(before.split_whitespace().count()).unwrap_or(i64::MAX);
+    let after = i64::try_from(after.split_whitespace().count()).unwrap_or(i64::MAX);
+    after.saturating_sub(before)
 }
 
 // Count exactly the line endings recognized by the editor, including mixed formats.
@@ -1135,6 +1207,40 @@ mod tests {
         assert!(!writer.is_busy());
         let _ = writer.update(Message::Reference(crate::reference::Message::CancelEdit));
         assert!(!writer.has_unsaved_changes());
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn daily_words_only_track_successful_saves_of_indexed_chapters() {
+        use iced::widget::text_editor::{Action, Edit};
+        use std::sync::Arc;
+        let dir = std::env::temp_dir().join(format!("novelcraft-writer-activity-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let project = crate::project::add_chapter(crate::project::create(dir.clone()).await.unwrap(), "Bab".into()).await.unwrap();
+        let path = project.chapter_path(0).unwrap();
+        let mut writer = Writer::default();
+        let _ = writer.update(Message::ProjectLoaded(Ok(Some(project))));
+        let _ = writer.update(Message::Opened(Ok(Some((path.clone(), String::new())))));
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Paste(Arc::new("satu dua".into())))));
+        let _ = writer.update(Message::Save);
+        let _ = writer.update(Message::ConfirmFormatSave);
+        let prepared = prepare_destination(Some(path.clone()), writer.saved_contents.clone(), writer.contents_to_save(), path.clone()).await.unwrap();
+        let _ = writer.update(Message::SavePrepared(Ok(Some(prepared.clone()))));
+        let _ = writer.update(Message::Saved(write_prepared(prepared).await));
+        assert!(writer.activity_pending);
+        assert!(!writer.dirty);
+        let report = crate::activity::record_async(dir.clone(), 2).await.unwrap();
+        assert_eq!(report.days.last().unwrap().net, 2);
+        let _ = writer.update(Message::ActivityRecorded(dir.clone(), Ok(report)));
+        assert!(!writer.is_busy());
+        let _ = writer.update(Message::Saved(Ok(Some((path.clone(), "satu dua\n".into())))));
+        assert!(!writer.activity_pending); // no edit, no count
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Insert('x'))));
+        let _ = writer.update(Message::Saved(Err("gagal".into())));
+        assert!(!writer.activity_pending); // failed save, no count
+        let _ = writer.update(Message::Saved(Ok(Some((dir.join("lain.md"), "tiga kata lain".into())))));
+        assert!(!writer.activity_pending); // Save As to a different file is not counted
+        assert_eq!(word_delta("satu dua", "satu"), -1);
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 

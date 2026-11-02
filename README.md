@@ -175,6 +175,32 @@ Chapter tetap file Markdown dan daftar chapter tetap `.novelcraft.json`; setting
 Library, dan bookmark juga masih JSON, jadi migrasi semua metadata ke SQLite belum
 selesai. Pemeriksaan path bukan penguncian filesystem dan tidak menutup semua race.
 
+**Target & streak** di panel proyek menyimpan target harian opsional dan
+menampilkan daftar kalender 31 hari terakhir. Jumlah harian adalah perubahan
+**bersih jumlah kata** antara versi file sebelumnya dan versi baru pada setiap
+penyimpanan chapter yang terdaftar, termasuk auto-save. Penghapusan mengurangi
+jumlah bersih; angka negatif ditampilkan sebagai nol. Membuka file, menyimpan
+ulang tanpa perubahan, menyimpan file di luar daftar, dan Simpan sebagai ke path
+berbeda tidak dihitung. Perubahan file di luar aplikasi dan penulisan sebelum
+fitur ini dipasang tidak dihitung. Kata dipisahkan whitespace, bukan analisis
+bahasa; hitungan bersih bukan jumlah penekanan tombol atau semua kata yang pernah
+ditulis. Statistik dicatat pada tanggal lokal sistem saat pencatatan setelah file
+berhasil disimpan; perubahan zona waktu/jam sistem memengaruhi tanggal.
+
+Streak adalah hari berurutan dengan jumlah bersih lebih dari nol, terhitung hingga
+hari ini atau kemarin; tidak bergantung pada target. Tampilan kalender dibatasi
+31 hari, tetapi perhitungan streak memakai semua riwayat. Statistik dan target
+per proyek tersimpan dalam database SQLite. Penulisan naskah dan statistik adalah
+dua transaksi terpisah: jika statistik gagal atau aplikasi berhenti di antaranya,
+naskah tetap tersimpan tetapi hitungan dapat hilang dan tidak dicoba ulang;
+peringatan muncul saat kegagalan terdeteksi. Target yang sedang diedit harus
+disimpan atau dibatalkan sebelum mengganti proyek. Target yang diubah instance
+lain ditolak dan harus dimuat ulang setelah pembatalan edit.
+
+Database catatan versi 1 ditingkatkan ke versi 2 secara transaksional saat pertama
+dibuka; catatan lama dipertahankan. Versi aplikasi lama yang hanya mendukung versi
+1 tidak bisa membaca versi 2. Buat backup sebelum memperbarui aplikasi.
+
 **Mode Zen** di Writer menyembunyikan navigasi, panel chapter, dan toolbar,
 serta meminta fullscreen. **Keluar Zen** mengembalikan tampilan dan hanya
 meminta mode jendela jika Zen yang mengaktifkan fullscreen. Fullscreen yang
@@ -525,8 +551,8 @@ file. Aturan dan integrasi Hyprland belum tersedia.
 - [ ] Chapter management lengkap (operasi daftar dan penambahan file lokal tersedia; tree view dan drag & drop belum)
 - [ ] Character database lengkap (nama, deskripsi dan relasi teks bebas sudah tersedia; relasi terstruktur belum)
 - [x] World-building notes dasar: tempat, waktu, lore (catatan teks satu baris)
-- [ ] Word count target harian (target sementara per draft sudah tersedia)
-- [ ] Writing streak tracker (kalender)
+- [x] Target kata harian per proyek (berdasarkan perubahan bersih chapter tersimpan)
+- [x] Writing streak berdasarkan hari aktif dan daftar kalender 31 hari
 - [x] Mode Zen Writer: editor minimal dan fullscreen dengan pemulihan mode sebelumnya (bergantung compositor)
 - [x] Auto-save setiap 30 detik untuk file bernama (opt-in per file; tanpa pemulihan draft tanpa nama)
 - [ ] SQLite storage untuk semua metadata (baru karakter dan catatan world-building; metadata lama masih JSON)

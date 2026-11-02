@@ -1,3 +1,4 @@
+mod activity;
 mod bookmarks;
 mod epub_reader;
 mod library;
@@ -506,7 +507,7 @@ impl NovelCraft {
                 "Operasi file Reader, Writer, Library, atau Settings masih berlangsung. Selesaikan dialog atau tunggu proses selesai sebelum menutup aplikasi.",
             ));
         } else if self.writer.has_unsaved_changes() {
-            content = content.push(text("Draft Writer atau catatan memiliki perubahan yang belum disimpan."));
+            content = content.push(text("Draft, catatan, atau target harian memiliki perubahan yang belum disimpan."));
             content = content.push(
                 row![
                     button("Kembali ke Writer").on_press(Message::ReturnToWriter),

@@ -716,7 +716,16 @@ impl NovelCraft {
             }
         }
         let sidebar_content: Element<'_, Message> = if is_workspace && compact {
-            let mut menu = button(text("☰").size(18))
+            let icon_color = mockup_style::muted(&theme);
+            let line = || {
+                container(Space::new(18, 2)).style(move |_| {
+                    container::Style::default().background(icon_color)
+                })
+            };
+            let icon = column![line(), line(), line()]
+                .spacing(3)
+                .align_x(iced::Alignment::Center);
+            let mut menu = button(icon)
                 .width(Length::Fill)
                 .height(40)
                 .style(mockup_style::navigation_menu);

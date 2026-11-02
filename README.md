@@ -122,7 +122,7 @@ contoh di mockup tidak otomatis menjadi fitur aplikasi native.
 
 Di Writer, **Proyek baru** memilih folder yang sudah ada dan membuat `.novelcraft.json`
 di dalamnya; file metadata yang sudah ada tidak ditimpa. **Buka proyek** memilih
-folder yang berisi metadata itu. Masukkan judul dan pilih **Tambah chapter** untuk
+folder yang berisi metadata itu. Masukkan judul dan pilih **Chapter baru** untuk
 membuat file kosong `chapter-N.md`; klik chapter pada daftar untuk membukanya di
 editor, lalu simpan secara manual seperti draft biasa. Folder dapat berisi file lain:
 nomor yang sudah dipakai dilewati, bukan ditimpa. Judul disimpan di metadata,
@@ -136,9 +136,11 @@ sebagai** menulis ke lokasi lain tetapi tidak mengubah daftar chapter proyek.
 Tombol **Judul** mengubah judul di metadata tanpa mengganti nama file; **Atas**
 dan **Bawah** mengubah urutan dalam daftar. **Hapus** meminta konfirmasi dan
 hanya menghapus entri dari daftar, bukan file Markdown atau draft yang sedang
-terbuka. File yang dilepas belum bisa ditambahkan kembali melalui daftar chapter;
-file tetap dapat dibuka melalui tombol **Buka** biasa. Saat ini belum ada impor
-file chapter yang sudah ada, tree view, drag & drop, atau autosave.
+terbuka. Untuk menambahkan file yang sudah ada (termasuk yang dilepas), masukkan judul
+lalu gunakan **Tambah file**. File `.md` atau `.markdown` harus merupakan file
+biasa langsung di folder proyek; tidak dipindahkan atau diubah. Nama file harus
+berupa UTF-8 dan tidak boleh terdaftar dua kali. Pemeriksaan file bukan penguncian;
+file dapat berubah setelah dipilih. Tree view dan drag & drop belum ada.
 
 Metadata proyek divalidasi dan perubahan eksternal diperiksa sebelum penulisan;
 metadata rusak, versi tidak didukung, dan symbolic link ditolak. Jika pembuatan
@@ -151,9 +153,19 @@ pemeriksaan konflik tidak menutup semua race; gunakan satu instance dan buat bac
 Writer meminta konfirmasi sebelum membuat draft baru, membuka file lain, atau
 menutup jendela jika draft memiliki perubahan yang belum disimpan. Saat operasi file Reader, Writer, Library, atau
 Settings masih berlangsung, selesaikan dialog atau tunggu prosesnya sebelum
-menutup aplikasi. Simpan draft secara manual; peringatan penutupan tidak dapat
+menutup aplikasi. Simpan draft secara manual atau aktifkan auto-save per file; peringatan penutupan tidak dapat
 melindungi dari penghentian paksa, crash, atau kehilangan daya. Dialog file
 Wayland memerlukan portal desktop yang berfungsi.
+
+**Auto-save** dapat diaktifkan secara eksplisit setelah file dibuka atau disimpan;
+konfirmasi menjelaskan normalisasi newline. Setiap 30 detik, jika file tersebut
+memiliki perubahan dan tidak ada dialog/operasi yang menghalangi, Writer menulis
+ke file yang sama dengan pemeriksaan konflik biasa. Bila penyimpanan gagal,
+auto-save berhenti dan draft tetap belum disimpan; periksa pesan kesalahan.
+Auto-save mati saat membuka file lain atau membuat draft baru, serta tidak
+tersimpan antar-sesi. Draft tanpa nama tidak disimpan otomatis. Interval 30 detik
+bukan jaminan penyimpanan saat crash; selalu buat backup. Karena tidak ada
+penguncian file, konflik tertentu masih dapat terlewat.
 
 Penyimpanan Writer menulis file sementara di direktori tujuan sebelum mengganti
 file lama. Pada Linux, symbolic link yang valid diikuti dan izin file dipertahankan;
@@ -483,13 +495,13 @@ file. Aturan dan integrasi Hyprland belum tersedia.
 
 ### Phase 2 — Novel Writing Suite *(target: v0.3)*
 > Fitur khusus untuk menulis novel secara serius.
-- [ ] Chapter management lengkap (operasi daftar dasar tersedia; impor file yang ada, tree view dan drag & drop belum)
+- [ ] Chapter management lengkap (operasi daftar dan penambahan file lokal tersedia; tree view dan drag & drop belum)
 - [ ] Character database (nama, deskripsi, relasi)
 - [ ] World-building notes (tempat, waktu, lore)
 - [ ] Word count target harian (target sementara per draft sudah tersedia)
 - [ ] Writing streak tracker (kalender)
 - [ ] Distraction-free / Zen mode lengkap (mode fokus sidebar dan fullscreen terpisah sudah tersedia)
-- [ ] Auto-save setiap 30 detik
+- [x] Auto-save setiap 30 detik untuk file bernama (opt-in per file; tanpa pemulihan draft tanpa nama)
 - [ ] SQLite storage untuk semua metadata
 
 ### Phase 3 — Advanced Reader *(target: v0.5)*

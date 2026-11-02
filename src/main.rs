@@ -204,6 +204,9 @@ impl NovelCraft {
             window::close_requests().map(Message::CloseRequested),
             window::resize_events().map(|_| Message::WindowResized),
             event::listen_with(shortcut_event),
+            if self.writer.autosave_enabled() {
+                iced::time::every(std::time::Duration::from_secs(30)).map(|_| Message::Writer(writer::Message::AutosaveTick))
+            } else { Subscription::none() },
         ])
     }
 
@@ -389,6 +392,7 @@ impl NovelCraft {
                 self.update(message)
             }
             Message::Shortcut(_) => Task::none(),
+            Message::Writer(writer::Message::AutosaveTick) if self.pending_close.is_some() => Task::none(),
             Message::Writer(writer::Message::Shortcut(shortcut)) => self.update(Message::Shortcut(shortcut)),
             Message::Writer(message) => self.writer.update(message).map(Message::Writer),
             Message::Reader(message) => {

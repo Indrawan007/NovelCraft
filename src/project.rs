@@ -1,7 +1,7 @@
 //! A project is an ordered index of ordinary Markdown files in one directory.
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 
 const MANIFEST: &str = ".novelcraft.json";
@@ -40,13 +40,23 @@ fn validate(manifest: &Manifest) -> Result<(), String> {
     let mut names = HashSet::new();
     for chapter in &manifest.chapters {
         validate_title(&chapter.title)?;
-        let number = chapter.file.strip_prefix("chapter-").and_then(|s| s.strip_suffix(".md"));
-        if !number.is_some_and(|s| !s.is_empty() && s.len() <= 20 && s.bytes().all(|b| b.is_ascii_digit()))
-            || !names.insert(&chapter.file) {
+        if !valid_filename(&chapter.file) || !names.insert(&chapter.file) {
             return Err("Daftar file chapter tidak valid atau duplikat.".into());
         }
     }
     Ok(())
+}
+
+// Only a single filename in the project folder; never allow traversal.
+fn valid_filename(name: &str) -> bool {
+    let path = Path::new(name);
+    let mut components = path.components();
+    matches!((components.next(), components.next()), (Some(Component::Normal(_)), None))
+        && !name.contains('/') && !name.contains('\\')
+        && !name.chars().any(char::is_control)
+        && path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown")
+        })
 }
 
 fn validate_title(title: &str) -> Result<(), String> {
@@ -128,6 +138,35 @@ pub async fn add_chapter(mut project: Project, title: String) -> Result<Project,
     let expected = crate::writer::FileState::Present(project.snapshot.clone());
     crate::writer::atomic_write_regular_checked(&manifest_path, &bytes, &expected).await
         .map_err(|e| format!("Gagal menyimpan daftar proyek; file {name} tetap ada tetapi belum masuk daftar: {e}"))?;
+    project.snapshot = bytes;
+    Ok(project)
+}
+
+/// Index an existing regular Markdown file already in the project directory.
+pub async fn attach_chapter(mut project: Project, path: PathBuf, title: String) -> Result<Project, String> {
+    let title = title.trim().to_owned();
+    validate_title(&title)?;
+    let parent = path.parent().ok_or("Lokasi file tidak valid.")?;
+    let parent = tokio::fs::canonicalize(parent).await.map_err(|e| format!("Gagal memeriksa folder: {e}"))?;
+    if parent != project.folder { return Err("Pilih file Markdown yang berada langsung di folder proyek.".into()); }
+    let name = path.file_name().and_then(|name| name.to_str()).ok_or("Nama file harus berupa UTF-8.")?;
+    if !valid_filename(name) { return Err("File chapter harus berupa Markdown (.md atau .markdown) dengan nama file yang valid.".into()); }
+    if project.manifest.chapters.iter().any(|chapter| chapter.file == name) {
+        return Err("File ini sudah ada dalam daftar chapter.".into());
+    }
+    let meta = tokio::fs::symlink_metadata(&path).await.map_err(|e| format!("Gagal memeriksa file chapter: {e}"))?;
+    if !meta.is_file() || meta.file_type().is_symlink() {
+        return Err("File chapter harus berupa file biasa, bukan symbolic link.".into());
+    }
+    let manifest_path = project.folder.join(MANIFEST);
+    if read_manifest(&manifest_path).await? != project.snapshot {
+        return Err("Metadata proyek berubah di luar aplikasi; buka ulang proyek.".into());
+    }
+    project.manifest.chapters.push(Chapter { title, file: name.to_owned() });
+    let bytes = serde_json::to_vec_pretty(&project.manifest).map_err(|e| e.to_string())?;
+    let expected = crate::writer::FileState::Present(project.snapshot.clone());
+    crate::writer::atomic_write_regular_checked(&manifest_path, &bytes, &expected).await
+        .map_err(|e| format!("Gagal menyimpan daftar proyek: {e}"))?;
     project.snapshot = bytes;
     Ok(project)
 }
@@ -269,9 +308,62 @@ mod tests {
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn attach_existing_markdown_without_changing_file() {
+        let dir = temp_dir();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let file = dir.join("prolog.md");
+        tokio::fs::write(&file, "naskah asli\r\n").await.unwrap();
+        let project = create(dir.clone()).await.unwrap();
+        let project = attach_chapter(project, file.clone(), "Prolog".into()).await.unwrap();
+        assert_eq!(project.chapter_path(0).unwrap(), file);
+        assert!(attach_chapter(project.clone(), file.clone(), "Duplikat".into()).await.is_err());
+        assert_eq!(tokio::fs::read(&file).await.unwrap(), b"naskah asli\r\n");
+        let project = change_chapter(project, ChapterChange::Remove { index: 0 }).await.unwrap();
+        let project = attach_chapter(project, file.clone(), "Pulih".into()).await.unwrap();
+        assert_eq!(open(dir.clone()).await.unwrap().chapters()[0].title, "Pulih");
+        assert_eq!(project.chapter_path(0).unwrap(), file);
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn attach_rejects_other_directories_and_stale_index() {
+        let dir = temp_dir();
+        let other = temp_dir();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::create_dir_all(&other).await.unwrap();
+        let file = dir.join("ada.markdown");
+        tokio::fs::write(&file, "original").await.unwrap();
+        let external = other.join("luar.md");
+        tokio::fs::write(&external, "luar").await.unwrap();
+        let project = create(dir.clone()).await.unwrap();
+        assert!(attach_chapter(project.clone(), external, "Luar".into()).await.is_err());
+        tokio::fs::write(dir.join(MANIFEST), b"perubahan lain").await.unwrap();
+        assert!(attach_chapter(project, file.clone(), "Ada".into()).await.is_err());
+        assert_eq!(tokio::fs::read_to_string(file).await.unwrap(), "original");
+        assert_eq!(tokio::fs::read(dir.join(MANIFEST)).await.unwrap(), b"perubahan lain");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+        tokio::fs::remove_dir_all(other).await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn attach_rejects_symbolic_link() {
+        let dir = temp_dir();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let target = dir.join("target.md");
+        tokio::fs::write(&target, "original").await.unwrap();
+        let link = dir.join("link.md");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let project = create(dir.clone()).await.unwrap();
+        assert!(attach_chapter(project, link, "Tautan".into()).await.is_err());
+        assert_eq!(tokio::fs::read_to_string(target).await.unwrap(), "original");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
     #[test]
     fn paths_titles_and_version_are_validated() {
-        for name in ["../chapter-1.md", "chapter-a.md", "chapter-1.md/../x", "chapter-.md"] {
+        for name in ["../chapter-1.md", "chapter-a.txt", "chapter-1.md/../x", "chapter-1.md\\..\\x.md", "/absolute.md"] {
             let manifest = Manifest { version: 1, chapters: vec![Chapter { title: "x".into(), file: name.into() }] };
             assert!(validate(&manifest).is_err());
         }

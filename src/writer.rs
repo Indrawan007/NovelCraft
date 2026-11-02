@@ -16,6 +16,9 @@ pub struct Writer {
     pending_chapter_rename: Option<usize>,
     chapter_rename_input: String,
     pending_chapter_remove: Option<usize>,
+    autosave_path: Option<PathBuf>,
+    pending_autosave_confirmation: bool,
+    autosave_in_flight: bool,
     show_preview: bool,
     preview_items: Vec<markdown::Item>,
     preview_notice: Option<String>,
@@ -57,6 +60,8 @@ pub enum Message {
     ProjectLoaded(Result<Option<crate::project::Project>, String>),
     ChapterTitleChanged(String),
     AddChapter,
+    AttachChapter,
+    ChapterAttached(Result<Option<crate::project::Project>, String>),
     ChapterAdded(Result<crate::project::Project, String>),
     OpenChapter(usize),
     RenameChapter(usize),
@@ -69,6 +74,11 @@ pub enum Message {
     ConfirmChapterRemove,
     CancelChapterRemove,
     ChapterChanged(Result<crate::project::Project, String>),
+    EnableAutosave,
+    ConfirmAutosave,
+    CancelAutosave,
+    DisableAutosave,
+    AutosaveTick,
     ConfirmDiscard,
     CancelDiscard,
     Opened(Result<Option<(PathBuf, String)>, String>),
@@ -91,6 +101,10 @@ impl Writer {
         self.busy
     }
 
+    pub(crate) fn autosave_enabled(&self) -> bool {
+        self.autosave_path.is_some()
+    }
+
     pub(crate) fn draft_stats_label(&self) -> String {
         match word_target(&self.target_input) {
             Some(target) => format!("{} / {target} kata", self.word_count),
@@ -100,7 +114,7 @@ impl Writer {
 
     fn controls_blocked(&self) -> bool {
         self.busy || self.pending_discard.is_some() || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
-            || self.pending_chapter_rename.is_some() || self.pending_chapter_remove.is_some()
+            || self.pending_chapter_rename.is_some() || self.pending_chapter_remove.is_some() || self.pending_autosave_confirmation
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -166,6 +180,21 @@ impl Writer {
                     return Task::perform(crate::project::add_chapter(project, self.chapter_title.clone()), Message::ChapterAdded);
                 }
             }
+            Message::AttachChapter if !self.controls_blocked() => {
+                if let Some(project) = self.project.clone() {
+                    self.busy = true;
+                    self.error = None;
+                    return Task::perform(pick_existing_chapter(project, self.chapter_title.clone()), Message::ChapterAttached);
+                }
+            }
+            Message::ChapterAttached(result) => {
+                self.busy = false;
+                match result {
+                    Ok(Some(project)) => { self.project = Some(project); self.chapter_title.clear(); self.error = None; }
+                    Ok(None) => {}
+                    Err(error) => self.error = Some(error),
+                }
+            }
             Message::ChapterAdded(result) => {
                 self.busy = false;
                 match result {
@@ -229,6 +258,21 @@ impl Writer {
                     Err(error) => self.error = Some(error),
                 }
             }
+            Message::EnableAutosave if !self.controls_blocked() && self.path.is_some() && self.saved_contents.is_some() => {
+                self.pending_autosave_confirmation = true;
+                self.error = None;
+            }
+            Message::ConfirmAutosave if self.pending_autosave_confirmation && !self.busy => {
+                self.pending_autosave_confirmation = false;
+                self.autosave_path = self.path.clone();
+            }
+            Message::CancelAutosave if !self.busy => self.pending_autosave_confirmation = false,
+            Message::DisableAutosave if !self.controls_blocked() => self.autosave_path = None,
+            Message::AutosaveTick if !self.controls_blocked() && self.dirty && self.path.is_some()
+                && self.autosave_path == self.path && self.saved_contents.is_some() => {
+                self.autosave_in_flight = true;
+                return self.start_save(false);
+            }
             Message::ConfirmDiscard if !self.busy => {
                 if let Some(action) = self.pending_discard.take() {
                     return self.perform_action(action);
@@ -239,6 +283,7 @@ impl Writer {
                 self.busy = false;
                 match result {
                     Ok(Some((path, contents))) => {
+                        self.autosave_path = None;
                         self.path = Some(path);
                         self.content = text_editor::Content::with_text(&contents);
                         self.saved_contents = Some(contents);
@@ -270,10 +315,20 @@ impl Writer {
             Message::SavePrepared(result) => {
                 self.busy = false;
                 match result {
-                    Ok(Some(prepared)) if prepared.requires_overwrite => self.pending_overwrite = Some(prepared),
+                    Ok(Some(prepared)) if prepared.requires_overwrite => {
+                        self.autosave_in_flight = false;
+                        self.autosave_path = None;
+                        self.pending_overwrite = Some(prepared);
+                    },
                     Ok(Some(prepared)) => return self.start_prepared_save(prepared),
-                    Ok(None) => {}
-                    Err(error) => self.error = Some(error),
+                    Ok(None) => {
+                        if self.autosave_in_flight { self.autosave_path = None; self.autosave_in_flight = false; }
+                    }
+                    Err(error) => {
+                        let automatic = std::mem::take(&mut self.autosave_in_flight);
+                        if automatic { self.autosave_path = None; }
+                        self.error = Some(if automatic { format!("Auto-save dihentikan: {error}") } else { error });
+                    }
                 }
             }
             Message::ConfirmOverwrite if !self.busy => {
@@ -284,15 +339,20 @@ impl Writer {
             Message::CancelOverwrite if !self.busy => self.pending_overwrite = None,
             Message::Saved(result) => {
                 self.busy = false;
+                let automatic = std::mem::take(&mut self.autosave_in_flight);
                 match result {
                     Ok(Some((path, contents))) => {
+                        if self.autosave_path.as_ref().is_some_and(|enabled| enabled != &path) { self.autosave_path = None; }
                         self.path = Some(path);
                         self.saved_contents = Some(contents);
                         self.dirty = false;
                         self.error = None;
                     }
-                    Ok(None) => {}
-                    Err(error) => self.error = Some(error),
+                    Ok(None) => { if automatic { self.autosave_path = None; } }
+                    Err(error) => {
+                        if automatic { self.autosave_path = None; }
+                        self.error = Some(if automatic { format!("Auto-save dihentikan: {error}") } else { error });
+                    }
                 }
             }
             _ => {}
@@ -382,12 +442,15 @@ impl Writer {
         let mut save = button("Simpan");
         let mut save_as = button("Simpan sebagai");
         let mut preview = button(if self.show_preview { "Tutup preview" } else { "Preview" });
+        let mut autosave = button(if self.autosave_enabled() { "Matikan auto-save" } else { "Aktifkan auto-save" });
         if !self.controls_blocked() {
             new_draft = new_draft.on_press(Message::NewDraft);
             open = open.on_press(Message::Open);
             save = save.on_press(Message::Save);
             save_as = save_as.on_press(Message::SaveAs);
             preview = preview.on_press(Message::TogglePreview);
+            if self.autosave_enabled() { autosave = autosave.on_press(Message::DisableAutosave); }
+            else if self.path.is_some() && self.saved_contents.is_some() { autosave = autosave.on_press(Message::EnableAutosave); }
         }
 
         let filename = self
@@ -408,7 +471,7 @@ impl Writer {
 
         let mut view = column![
             text("Writer").size(32),
-            row![new_draft, open, save, save_as, preview].spacing(12),
+            row![new_draft, open, save, save_as, preview, autosave].spacing(12).wrap(),
             text("Ctrl+N: baru · Ctrl+O: buka · Ctrl+S: simpan · Ctrl+Shift+S: simpan sebagai").size(12),
             text(format!("{filename}{status}")),
         ]
@@ -475,12 +538,22 @@ impl Writer {
         if let Some(index) = self.pending_chapter_remove {
             if let Some(chapter) = self.project.as_ref().and_then(|project| project.chapters().get(index)) {
                 view = view.push(text(format!("Hapus '{}' dari daftar proyek?", chapter.title)));
-                view = view.push(text("File Markdown dan draft yang sedang dibuka tidak dihapus. File belum dapat ditambahkan kembali lewat daftar chapter.").size(14));
+                view = view.push(text("File Markdown dan draft yang sedang dibuka tidak dihapus. File dapat ditambahkan kembali melalui Tambah file.").size(14));
                 view = view.push(row![
                     button("Hapus dari daftar").on_press(Message::ConfirmChapterRemove),
                     button("Batal").on_press(Message::CancelChapterRemove),
                 ].spacing(12));
             }
+        }
+        if self.pending_autosave_confirmation {
+            view = view.push(text("Aktifkan auto-save setiap 30 detik untuk file ini? Isi file akan ditulis tanpa konfirmasi setiap kali. Editor dapat mengubah CRLF menjadi LF dan mengubah newline akhir. Perubahan eksternal diperiksa, tetapi tidak ada penguncian; buat backup."));
+            view = view.push(row![
+                button("Aktifkan untuk file ini").on_press(Message::ConfirmAutosave),
+                button("Batal").on_press(Message::CancelAutosave),
+            ].spacing(12));
+        }
+        if self.autosave_enabled() {
+            view = view.push(text("Auto-save aktif untuk file ini (setiap 30 detik); penyimpanan gagal akan menonaktifkannya.").size(12));
         }
         if let Some(error) = &self.error {
             view = view.push(text(error));
@@ -531,12 +604,14 @@ impl Writer {
         if let Some(project) = &self.project {
             project_panel = project_panel.push(text(project.folder().display().to_string()).size(12));
             let mut title = text_input("Judul chapter", &self.chapter_title).size(13);
-            let mut add = button("Tambah chapter");
+            let mut add = button("Chapter baru");
+            let mut attach = button("Tambah file");
             if !self.controls_blocked() {
                 title = title.on_input(Message::ChapterTitleChanged);
                 add = add.on_press(Message::AddChapter);
+                attach = attach.on_press(Message::AttachChapter);
             }
-            project_panel = project_panel.push(title).push(add);
+            project_panel = project_panel.push(title).push(row![add, attach].spacing(4).wrap());
             let mut chapters = iced::widget::Column::new().spacing(6).width(Length::Fill);
             for (index, chapter) in project.chapters().iter().enumerate() {
                 let active = project.chapter_path(index).as_ref() == self.path.as_ref();
@@ -620,6 +695,14 @@ fn editor_key_binding(press: text_editor::KeyPress) -> Option<text_editor::Bindi
         }
     }
     text_editor::Binding::from_key_press(press)
+}
+
+async fn pick_existing_chapter(project: crate::project::Project, title: String) -> Result<Option<crate::project::Project>, String> {
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .set_directory(project.folder())
+        .add_filter("Markdown", &["md", "markdown"])
+        .pick_file().await else { return Ok(None); };
+    crate::project::attach_chapter(project, file.path().to_owned(), title).await.map(Some)
 }
 
 async fn pick_project(create: bool) -> Result<Option<crate::project::Project>, String> {
@@ -914,6 +997,65 @@ mod tests {
         assert!(writer.has_unsaved_changes());
         assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), "naskah asli");
         tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn autosave_requires_consent_saves_and_stops_on_conflict() {
+        use iced::widget::text_editor::{Action, Edit};
+        let dir = std::env::temp_dir().join(format!("novelcraft-autosave-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("draft.md");
+        tokio::fs::write(&path, "lama\r\n").await.unwrap();
+        let mut writer = Writer::default();
+        let _ = writer.update(Message::Opened(Ok(Some((path.clone(), "lama\r\n".into())))));
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Insert('x'))));
+        let _ = writer.update(Message::AutosaveTick);
+        assert!(!writer.is_busy());
+        let _ = writer.update(Message::EnableAutosave);
+        assert!(writer.pending_autosave_confirmation);
+        let _ = writer.update(Message::AutosaveTick);
+        assert!(!writer.is_busy());
+        let _ = writer.update(Message::ConfirmAutosave);
+        assert!(writer.autosave_enabled());
+        let _ = writer.update(Message::AutosaveTick);
+        assert!(writer.is_busy());
+        let prepared = prepare_destination(Some(path.clone()), writer.saved_contents.clone(), writer.contents_to_save(), path.clone()).await.unwrap();
+        let _ = writer.update(Message::SavePrepared(Ok(Some(prepared.clone()))));
+        let result = write_prepared(prepared).await;
+        let _ = writer.update(Message::Saved(result));
+        assert!(!writer.has_unsaved_changes());
+        assert!(writer.autosave_enabled());
+        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), writer.saved_contents.clone().unwrap());
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Insert('y'))));
+        tokio::fs::write(&path, "diubah dari luar").await.unwrap();
+        let _ = writer.update(Message::AutosaveTick);
+        let prepared = prepare_destination(Some(path.clone()), writer.saved_contents.clone(), writer.contents_to_save(), path.clone()).await.unwrap();
+        let _ = writer.update(Message::SavePrepared(Ok(Some(prepared.clone()))));
+        let result = write_prepared(prepared).await;
+        assert!(result.is_err());
+        let _ = writer.update(Message::Saved(result));
+        assert!(!writer.autosave_enabled());
+        assert!(writer.has_unsaved_changes());
+        assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), "diubah dari luar");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[test]
+    fn autosave_is_file_scoped_and_does_not_start_for_new_draft() {
+        let mut writer = Writer::default();
+        let _ = writer.update(Message::EnableAutosave);
+        assert!(!writer.pending_autosave_confirmation);
+        let _ = writer.update(Message::Opened(Ok(Some(("lama.md".into(), "isi".into())))));
+        let _ = writer.update(Message::EnableAutosave);
+        let _ = writer.update(Message::CancelAutosave);
+        assert!(!writer.autosave_enabled());
+        let _ = writer.update(Message::EnableAutosave);
+        let _ = writer.update(Message::ConfirmAutosave);
+        assert!(writer.autosave_enabled());
+        let _ = writer.update(Message::Opened(Ok(Some(("baru.md".into(), "isi baru".into())))));
+        assert!(!writer.autosave_enabled());
+        let _ = writer.update(Message::NewDraft);
+        assert!(!writer.autosave_enabled());
     }
 
     #[test]

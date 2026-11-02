@@ -201,7 +201,10 @@ impl NovelCraft {
                 if page == Page::Reader && self.pending_close.is_none() {
                     self.reader.take_restore_task().map(Message::Reader)
                 } else if page == Page::Library {
-                    self.library.update(library::Message::RefreshBookmarks).map(Message::Library)
+                    Task::batch([
+                        self.library.update(library::Message::RefreshBookmarks).map(Message::Library),
+                        self.library.update(library::Message::RefreshAvailability).map(Message::Library),
+                    ])
                 } else {
                     Task::none()
                 }

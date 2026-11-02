@@ -145,7 +145,17 @@ baru sudah memiliki penanda tersimpan, penanda itu tetap dipakai. Lokasi baru ha
 berupa file biasa dengan ekstensi yang didukung dan tidak boleh sama persis dengan
 entri lain; alias path yang berbeda tidak dideteksi sebagai duplikat. Lokasi diperiksa
 kembali sebelum menyimpan, tetapi tidak dikunci dan bisa berubah sesudahnya. Jika file
-terhapus, hapus entrinya atau pilih lokasi lain. **Hapus dari daftar** meminta
+terhapus, hapus entrinya atau pilih lokasi lain.
+
+Kartu menampilkan hasil pemeriksaan lokasi terakhir (file ditemukan, tidak ditemukan,
+bukan file biasa, atau tidak dapat diperiksa). Pemeriksaan berjalan di latar belakang
+saat Library dimuat, daftarnya berubah, atau halaman Library dibuka; **Periksa ulang
+lokasi** juga tersedia. Status dapat menjadi usang setelah pemeriksaan, tidak memastikan
+file bisa dibaca atau isinya valid, dan tidak mencegah pembukaan; symbolic link diikuti.
+Filesystem yang lambat bisa menunda hasil seluruh pemeriksaan, tetapi tidak mengunci
+kontrol Library lainnya. Pemeriksaan tidak menghapus entri atau mengubah file.
+
+**Hapus dari daftar** meminta
 konfirmasi dan hanya menghapus entri Library, bukan file maupun penanda. Jika
 data Library memuat beberapa entri dengan path identik, semuanya dihapus setelah
 peringatan dan konfirmasi. Library menolak menimpa daftar yang berubah sejak dimuat; gunakan **Muat ulang Library** sebelum

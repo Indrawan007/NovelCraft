@@ -1,6 +1,7 @@
 use crate::bookmarks::{self, Bookmark};
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Column};
 use iced::{Element, Length, Task};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::AsyncWriteExt;
@@ -18,6 +19,18 @@ pub struct Library {
     bookmarks: Option<Vec<Bookmark>>,
     bookmark_error: Option<String>,
     bookmark_revision: u64,
+    availability: HashMap<PathBuf, Availability>,
+    availability_revision: u64,
+    availability_active: Option<u64>,
+    availability_pending: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Availability {
+    File,
+    Missing,
+    NotFile,
+    Unknown,
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +40,8 @@ pub enum Message {
     Loaded(Result<(Vec<PathBuf>, Option<Vec<u8>>), String>),
     RefreshBookmarks,
     BookmarksLoaded(u64, Result<Vec<Bookmark>, String>),
+    RefreshAvailability,
+    AvailabilityLoaded(u64, HashMap<PathBuf, Availability>),
     Search(String),
     Import,
     Imported(Result<Option<PathBuf>, String>),
@@ -75,6 +90,7 @@ impl Library {
                         self.snapshot = snapshot;
                         self.loaded = true;
                         self.error = None;
+                        return self.refresh_availability();
                     }
                     Err(error) => self.error = Some(error),
                 }
@@ -96,6 +112,17 @@ impl Library {
                         self.bookmarks = None;
                         self.bookmark_error = Some(error);
                     }
+                }
+            }
+            Message::RefreshAvailability if self.loaded => return self.refresh_availability(),
+            Message::AvailabilityLoaded(revision, availability) if self.availability_active == Some(revision) => {
+                self.availability_active = None;
+                if revision == self.availability_revision {
+                    self.availability = availability;
+                }
+                if self.availability_pending {
+                    self.availability_pending = false;
+                    return self.start_availability_check();
                 }
             }
             Message::Search(query) if !self.controls_blocked() => self.query = query,
@@ -173,6 +200,7 @@ impl Library {
                         self.books = books;
                         self.snapshot = Some(snapshot);
                         self.error = None;
+                        return self.refresh_availability();
                     }
                     Err(error) => self.error = Some(error),
                 }
@@ -180,6 +208,26 @@ impl Library {
             _ => {}
         }
         Task::none()
+    }
+
+    fn refresh_availability(&mut self) -> Task<Message> {
+        self.availability_revision = self.availability_revision.wrapping_add(1);
+        self.availability.clear();
+        if self.availability_active.is_some() {
+            // Keep at most one scan in flight, then scan the newest book list.
+            self.availability_pending = true;
+            return Task::none();
+        }
+        self.start_availability_check()
+    }
+
+    fn start_availability_check(&mut self) -> Task<Message> {
+        if self.books.is_empty() {
+            return Task::none();
+        }
+        let revision = self.availability_revision;
+        self.availability_active = Some(revision);
+        Task::perform(check_availability(self.books.clone()), move |result| Message::AvailabilityLoaded(revision, result))
     }
 
     fn save(&mut self, books: Vec<PathBuf>) -> Task<Message> {
@@ -213,6 +261,13 @@ impl Library {
         .spacing(12)
         .height(Length::Fill);
 
+        if self.loaded && !self.books.is_empty() {
+            let mut refresh = button("Periksa ulang lokasi");
+            if !self.controls_blocked() && self.availability_active.is_none() {
+                refresh = refresh.on_press(Message::RefreshAvailability);
+            }
+            view = view.push(refresh);
+        }
         if let Some(path) = &self.pending_remove {
             let count = self.books.iter().filter(|book| *book == path).count();
             view = view.push(text("Hapus entri ini dari Library? File buku dan penanda tidak dihapus."));
@@ -273,6 +328,7 @@ impl Library {
             let mut card = column![
                 text(name.to_string()).size(18),
                 text(path.display().to_string()).size(12),
+                text(availability_label(self.availability.get(path), self.availability_active.is_some())).size(14),
             ]
             .width(Length::Fill)
             .spacing(8);
@@ -305,6 +361,36 @@ impl Library {
             view = view.push(text("Tidak ada file yang cocok."));
         }
         view.push(scrollable(list).height(Length::Fill)).into()
+    }
+}
+
+fn availability_label(status: Option<&Availability>, checking: bool) -> &'static str {
+    match status {
+        Some(Availability::File) => "Lokasi: file ditemukan (isi belum diperiksa)",
+        Some(Availability::Missing) => "Lokasi: tidak ditemukan",
+        Some(Availability::NotFile) => "Lokasi: bukan file biasa",
+        Some(Availability::Unknown) => "Lokasi: tidak dapat diperiksa",
+        None if checking => "Lokasi: sedang diperiksa…",
+        None => "Lokasi: belum diperiksa",
+    }
+}
+
+async fn check_availability(books: Vec<PathBuf>) -> HashMap<PathBuf, Availability> {
+    let mut statuses = HashMap::new();
+    for path in books {
+        if statuses.contains_key(&path) { continue; }
+        let status = availability_from_metadata(tokio::fs::metadata(&path).await);
+        statuses.insert(path, status);
+    }
+    statuses
+}
+
+fn availability_from_metadata(metadata: std::io::Result<std::fs::Metadata>) -> Availability {
+    match metadata {
+        Ok(metadata) if metadata.is_file() => Availability::File,
+        Ok(_) => Availability::NotFile,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Availability::Missing,
+        Err(_) => Availability::Unknown,
     }
 }
 
@@ -489,6 +575,96 @@ async fn check_snapshot(path: &Path, expected: &Option<Vec<u8>>) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn availability_checks_file_missing_nonfile_and_symlinks_without_changing_them() {
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("novelcraft-library-availability-{}-{unique}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let file = dir.join("book.txt");
+        let missing = dir.join("missing.txt");
+        tokio::fs::write(&file, b"isi buku").await.unwrap();
+        let statuses = check_availability(vec![file.clone(), file.clone(), missing.clone(), dir.clone()]).await;
+        assert_eq!(statuses.len(), 3);
+        assert_eq!(statuses.get(&file), Some(&Availability::File));
+        assert_eq!(statuses.get(&missing), Some(&Availability::Missing));
+        assert_eq!(statuses.get(&dir), Some(&Availability::NotFile));
+        assert_eq!(availability_from_metadata(Err(std::io::ErrorKind::PermissionDenied.into())), Availability::Unknown);
+        assert_eq!(availability_from_metadata(Err(std::io::ErrorKind::NotFound.into())), Availability::Missing);
+        assert!(availability_label(Some(&Availability::File), false).contains("isi belum diperiksa"));
+        assert!(availability_label(None, true).contains("sedang diperiksa"));
+        assert!(availability_label(None, false).contains("belum diperiksa"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let link = dir.join("link.txt");
+            let broken = dir.join("broken.txt");
+            symlink(&file, &link).unwrap();
+            symlink(&missing, &broken).unwrap();
+            let statuses = check_availability(vec![link.clone(), broken.clone()]).await;
+            assert_eq!(statuses.get(&link), Some(&Availability::File));
+            assert_eq!(statuses.get(&broken), Some(&Availability::Missing));
+            assert!(tokio::fs::symlink_metadata(link).await.unwrap().file_type().is_symlink());
+            assert!(tokio::fs::symlink_metadata(broken).await.unwrap().file_type().is_symlink());
+        }
+        assert_eq!(tokio::fs::read(&file).await.unwrap(), b"isi buku".to_vec());
+        assert!(!missing.exists());
+        tokio::fs::remove_file(&file).await.unwrap();
+        let after_removal = check_availability(vec![file.clone()]).await;
+        assert_eq!(after_removal.get(&file), Some(&Availability::Missing));
+        tokio::fs::write(&file, b"dipulihkan").await.unwrap();
+        let after_restore = check_availability(vec![file.clone()]).await;
+        assert_eq!(after_restore.get(&file), Some(&Availability::File));
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[test]
+    fn availability_discards_stale_scans_and_coalesces_rechecks() {
+        let old = PathBuf::from("/old.txt");
+        let new = PathBuf::from("/new.txt");
+        let mut library = Library::default();
+        let _ = library.update(Message::Loaded(Ok((vec![old.clone()], None))));
+        let first = library.availability_active.unwrap();
+        assert!(!library.is_busy());
+        let _ = library.update(Message::RefreshAvailability);
+        let _ = library.update(Message::RefreshAvailability);
+        assert_eq!(library.availability_active, Some(first));
+        assert!(library.availability_pending);
+        let _ = library.update(Message::Saved(Ok((vec![new.clone()], b"[]".to_vec()))));
+        let latest = library.availability_revision;
+        assert_eq!(library.availability_active, Some(first));
+        let _ = library.update(Message::AvailabilityLoaded(first, HashMap::from([(old.clone(), Availability::Missing)])));
+        assert_eq!(library.availability_active, Some(latest));
+        assert!(!library.availability_pending);
+        assert!(library.availability.is_empty());
+        let _ = library.update(Message::AvailabilityLoaded(first, HashMap::from([(old, Availability::File)])));
+        assert_eq!(library.availability_active, Some(latest));
+        let _ = library.update(Message::AvailabilityLoaded(latest, HashMap::from([(new.clone(), Availability::File)])));
+        assert!(library.availability_active.is_none());
+        assert_eq!(library.availability.get(&new), Some(&Availability::File));
+        drop(library.view());
+        let _ = library.update(Message::RefreshAvailability);
+        assert!(library.availability.is_empty());
+        assert!(library.availability_active.is_some());
+        let _ = library.update(Message::Loaded(Ok((vec![], None))));
+        assert!(library.availability_pending);
+        let active = library.availability_active.unwrap();
+        let _ = library.update(Message::AvailabilityLoaded(active, HashMap::from([(new, Availability::Missing)])));
+        assert!(library.availability_active.is_none());
+        assert!(!library.availability_pending);
+        assert!(library.availability.is_empty());
+    }
+
+    #[test]
+    fn returning_to_library_requests_availability_refresh() {
+        let mut app = crate::NovelCraft::default();
+        let _ = app.library.update(Message::Loaded(Ok((vec![PathBuf::from("/book.txt")], None))));
+        let revision = app.library.availability_revision;
+        let _ = app.update(crate::Message::Navigate(crate::Page::Reader));
+        let _ = app.update(crate::Message::Navigate(crate::Page::Library));
+        assert_ne!(app.library.availability_revision, revision);
+        assert!(app.library.availability_pending);
+    }
 
     #[test]
     fn search_matches_filename_without_case_sensitivity() {

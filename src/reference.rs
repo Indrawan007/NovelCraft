@@ -50,14 +50,17 @@ impl Reference {
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Load(folder) if !self.busy && self.allow_switch() => {
+            Message::Load(folder) if !self.busy && !self.pending_delete && self.allow_switch() => {
                 self.busy = true; self.loaded = false; self.folder = Some(folder.clone()); self.notice = None;
                 return Task::perform(run_load(folder), Message::Loaded);
             }
             Message::Loaded(result) => {
                 self.busy = false;
                 match result {
-                    Ok(entries) => { self.entries = entries; self.loaded = true; self.notice = None; }
+                    Ok(entries) => {
+                        self.entries = entries; self.loaded = true; self.selection = None;
+                        self.form = None; self.baseline = None; self.notice = None;
+                    }
                     Err(e) => { self.loaded = false; self.notice = Some(e); }
                 }
             }
@@ -107,6 +110,11 @@ impl Reference {
         if self.busy { content = content.push(text("Memproses catatan...")); }
         if let Some(notice) = &self.notice { content = content.push(text(notice).size(13)); }
         if self.loaded {
+            if let Some(folder) = &self.folder {
+                let mut reload = button("Muat ulang catatan");
+                if !self.busy && !self.pending_delete { reload = reload.on_press(Message::Load(folder.clone())); }
+                content = content.push(reload);
+            }
             let mut kinds = iced::widget::Row::new().spacing(6);
             for kind in [Kind::Character, Kind::Place, Kind::Time, Kind::Lore] {
                 let mut add = button(text(format!("+ {}", kind.label())).size(12));
@@ -228,6 +236,21 @@ mod tests {
         assert_eq!(reference.form.as_ref().unwrap().kind, Kind::Character);
         let _ = reference.update(Message::CancelEdit);
         assert!(!reference.is_dirty());
+    }
+    #[test]
+    fn reload_does_not_discard_dirty_form_and_clears_stale_selection() {
+        let mut reference = Reference::default();
+        let _ = reference.update(Message::Loaded(Ok(vec![Entry { id: 1, revision: 1, kind: Kind::Character, name: "A".into(), description: "".into(), relations: "".into() }])));
+        let _ = reference.update(Message::Select(1));
+        let _ = reference.update(Message::Name("unsaved".into()));
+        let _ = reference.update(Message::Load("/tmp".into()));
+        assert!(!reference.is_busy());
+        assert_eq!(reference.form.as_ref().unwrap().name, "unsaved");
+        let _ = reference.update(Message::CancelEdit);
+        let _ = reference.update(Message::Select(1));
+        let _ = reference.update(Message::Loaded(Ok(vec![])));
+        assert!(reference.form.is_none());
+        assert!(reference.selection.is_none());
     }
     #[test]
     fn world_categories_are_persisted() {

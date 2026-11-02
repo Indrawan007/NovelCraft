@@ -363,7 +363,10 @@ fn target_progress(words: usize, target: usize) -> f32 {
 fn editor_key_binding(press: text_editor::KeyPress) -> Option<text_editor::Binding<Message>> {
     if press.status == text_editor::Status::Focused {
         if let Some(shortcut) = crate::shortcuts::from_key(press.key.as_ref(), press.modifiers) {
-            return Some(text_editor::Binding::Custom(Message::Shortcut(shortcut)));
+            // Reader-only keys must keep the editor's normal page movement.
+            if !matches!(shortcut, crate::shortcuts::Shortcut::PreviousSection | crate::shortcuts::Shortcut::NextSection) {
+                return Some(text_editor::Binding::Custom(Message::Shortcut(shortcut)));
+            }
         }
     }
     text_editor::Binding::from_key_press(press)
@@ -799,6 +802,13 @@ mod tests {
             editor_key_binding(press("c", Modifiers::CTRL)),
             Some(text_editor::Binding::Copy)
         ));
+        for key in [iced::keyboard::key::Named::PageUp, iced::keyboard::key::Named::PageDown] {
+            let page_press = text_editor::KeyPress {
+                key: Key::Named(key), modifiers: Modifiers::CTRL, text: None,
+                status: text_editor::Status::Focused,
+            };
+            assert!(matches!(editor_key_binding(page_press), Some(text_editor::Binding::Move(_))));
+        }
         let mut unfocused = press("s", Modifiers::CTRL);
         unfocused.status = text_editor::Status::Active;
         assert!(editor_key_binding(unfocused).is_none());

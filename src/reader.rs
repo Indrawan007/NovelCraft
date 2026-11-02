@@ -221,14 +221,14 @@ impl Reader {
                     Err(error) => self.error = Some(error),
                 }
             }
-            Message::PreviousSection if !self.controls_blocked() && self.section > 0 => {
+            Message::PreviousSection if self.is_epub && !self.controls_blocked() && self.section > 0 => {
                 self.pending_scroll = None;
                 self.section -= 1;
                 self.search_notice = None;
                 self.invalidate_scroll_position();
                 return reset_scroll();
             }
-            Message::NextSection if !self.controls_blocked() && self.section + 1 < self.sections.len() => {
+            Message::NextSection if self.is_epub && !self.controls_blocked() && self.section + 1 < self.sections.len() => {
                 self.pending_scroll = None;
                 self.section += 1;
                 self.search_notice = None;
@@ -448,6 +448,7 @@ impl Reader {
                 row![previous, text(format!("Bagian {} / {}", self.section + 1, self.sections.len())), next]
                     .spacing(12),
             );
+            view = view.push(text("Ctrl+PageUp / Ctrl+PageDown: pindah bagian").size(12));
             let mut input = text_input("Nomor", &self.section_input).width(100);
             let mut jump = button("Pergi");
             if !self.controls_blocked() {
@@ -989,6 +990,40 @@ mod tests {
         let _ = reader.update(Message::JumpToSection);
         assert!(reader.section_input.is_empty());
         assert_eq!(reader.section, 0);
+    }
+
+    #[test]
+    fn section_shortcuts_respect_page_busy_confirmation_and_document_type() {
+        use crate::{Message as AppMessage, NovelCraft, Page};
+        use crate::shortcuts::Shortcut;
+        let mut app = NovelCraft::default();
+        app.reader = Reader { path: Some("book.epub".into()), sections: vec!["satu".into(), "dua".into()], is_epub: true, ..Reader::default() };
+        let _ = app.update(AppMessage::Shortcut(Shortcut::NextSection));
+        assert_eq!(app.reader.section, 0); // Library, not Reader.
+        app.page = Page::Reader;
+        let _ = app.update(AppMessage::Shortcut(Shortcut::PreviousSection));
+        assert_eq!(app.reader.section, 0);
+        let _ = app.update(AppMessage::Shortcut(Shortcut::NextSection));
+        let _ = app.update(AppMessage::Shortcut(Shortcut::NextSection));
+        assert_eq!(app.reader.section, 1); // Stop at end.
+        app.reader.busy = true;
+        let _ = app.update(AppMessage::Shortcut(Shortcut::PreviousSection));
+        assert_eq!(app.reader.section, 1);
+        app.reader.busy = false;
+        let _ = app.update(AppMessage::Reader(Message::AskRemoveBookmark));
+        let _ = app.update(AppMessage::Shortcut(Shortcut::PreviousSection));
+        assert_eq!(app.reader.section, 1);
+        let _ = app.update(AppMessage::Reader(Message::CancelRemoveBookmark));
+        let id = iced::window::Id::unique();
+        app.pending_close = Some(id);
+        let _ = app.update(AppMessage::Shortcut(Shortcut::PreviousSection));
+        assert_eq!(app.reader.section, 1);
+        app.pending_close = None;
+        let _ = app.update(AppMessage::Shortcut(Shortcut::PreviousSection));
+        assert_eq!(app.reader.section, 0);
+        app.reader.is_epub = false;
+        let _ = app.update(AppMessage::Shortcut(Shortcut::NextSection));
+        assert_eq!(app.reader.section, 0);
     }
 
     #[test]

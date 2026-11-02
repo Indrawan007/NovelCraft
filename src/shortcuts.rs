@@ -10,12 +10,21 @@ pub enum Shortcut {
     Open,
     Save,
     SaveAs,
+    PreviousSection,
+    NextSection,
 }
 
 /// Linux shortcuts intentionally exclude Alt/AltGr and Super combinations.
 pub fn from_key(key: Key<&str>, modifiers: Modifiers) -> Option<Shortcut> {
     if !modifiers.control() || modifiers.alt() || modifiers.logo() {
         return None;
+    }
+    if !modifiers.shift() {
+        match &key {
+            Key::Named(iced::keyboard::key::Named::PageUp) => return Some(Shortcut::PreviousSection),
+            Key::Named(iced::keyboard::key::Named::PageDown) => return Some(Shortcut::NextSection),
+            _ => {}
+        }
     }
     let Key::Character(key) = key else {
         return None;
@@ -50,6 +59,17 @@ mod tests {
         assert_eq!(from_key(Key::Character("o"), ctrl), Some(Shortcut::Open));
         assert_eq!(from_key(Key::Character("s"), ctrl), Some(Shortcut::Save));
         assert_eq!(from_key(Key::Character("S"), ctrl | Modifiers::SHIFT), Some(Shortcut::SaveAs));
+    }
+
+    #[test]
+    fn recognizes_reader_section_shortcuts_only_without_other_modifiers() {
+        use iced::keyboard::key::Named;
+        assert_eq!(from_key(Key::Named(Named::PageUp), Modifiers::CTRL), Some(Shortcut::PreviousSection));
+        assert_eq!(from_key(Key::Named(Named::PageDown), Modifiers::CTRL), Some(Shortcut::NextSection));
+        assert_eq!(from_key(Key::Named(Named::PageUp), Modifiers::empty()), None);
+        assert_eq!(from_key(Key::Named(Named::PageUp), Modifiers::CTRL | Modifiers::SHIFT), None);
+        assert_eq!(from_key(Key::Named(Named::PageDown), Modifiers::CTRL | Modifiers::ALT), None);
+        assert_eq!(from_key(Key::Named(Named::PageDown), Modifiers::CTRL | Modifiers::LOGO), None);
     }
 
     #[test]

@@ -254,6 +254,8 @@ impl NovelCraft {
                     Shortcut::Open if self.page == Page::Writer => Message::Writer(writer::Message::Open),
                     Shortcut::Save if self.page == Page::Writer => Message::Writer(writer::Message::Save),
                     Shortcut::SaveAs if self.page == Page::Writer => Message::Writer(writer::Message::SaveAs),
+                    Shortcut::PreviousSection if self.page == Page::Reader => Message::Reader(reader::Message::PreviousSection),
+                    Shortcut::NextSection if self.page == Page::Reader => Message::Reader(reader::Message::NextSection),
                     _ => return Task::none(),
                 };
                 self.update(message)

@@ -205,11 +205,13 @@ masih dapat terlewat. Hindari menjalankan beberapa instance bersamaan.
 |---|---|
 | `Ctrl+1`, `Ctrl+2`, `Ctrl+3` | Buka Library, Reader, atau Writer |
 | `Ctrl+,` | Buka Settings |
+| `Ctrl+PageUp`, `Ctrl+PageDown` | Bagian EPUB sebelumnya atau berikutnya di Reader |
 | `Ctrl+N`, `Ctrl+O` | Draft baru atau buka file di Writer |
 | `Ctrl+S`, `Ctrl+Shift+S` | Simpan atau simpan sebagai di Writer |
 
-Shortcut Writer hanya aktif saat halaman Writer terbuka dan tetap mengikuti
-konfirmasi serta status operasi file. Kontrol yang sedang fokus atau shortcut
+Shortcut Reader hanya aktif untuk EPUB di halaman Reader; bagian tidak berputar
+saat mencapai awal atau akhir. Shortcut Writer hanya aktif saat halaman Writer
+terbuka. Keduanya tetap mengikuti konfirmasi serta status operasi file. Kontrol yang sedang fokus atau shortcut
 sistem dapat menangani kombinasi tombol lebih dahulu.
 
 ---

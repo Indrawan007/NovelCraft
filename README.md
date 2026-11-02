@@ -120,9 +120,10 @@ contoh di mockup tidak otomatis menjadi fitur aplikasi native.
 
 ### Proyek dan chapter (tahap awal)
 
-Di Writer, **Proyek baru** memilih folder yang sudah ada dan membuat `.novelcraft.json`
-di dalamnya; file metadata yang sudah ada tidak ditimpa. **Buka proyek** memilih
-folder yang berisi metadata itu. Masukkan judul dan pilih **Chapter baru** untuk
+Di Writer, **Proyek baru** memilih folder yang sudah ada dan membuat
+`.novelcraft-project.sqlite3` di dalamnya; metadata yang sudah ada tidak ditimpa.
+**Buka proyek** memilih folder yang berisi database itu atau manifest lama
+`.novelcraft.json`. Masukkan judul dan pilih **Chapter baru** untuk
 membuat file kosong `chapter-N.md`; klik chapter pada daftar untuk membukanya di
 editor, lalu simpan secara manual seperti draft biasa. Folder dapat berisi file lain:
 nomor yang sudah dipakai dilewati, bukan ditimpa. Judul disimpan di metadata,
@@ -142,13 +143,32 @@ biasa langsung di folder proyek; tidak dipindahkan atau diubah. Nama file harus
 berupa UTF-8 dan tidak boleh terdaftar dua kali. Pemeriksaan file bukan penguncian;
 file dapat berubah setelah dipilih. Tree view dan drag & drop belum ada.
 
-Metadata proyek divalidasi dan perubahan eksternal diperiksa sebelum penulisan;
-metadata rusak, versi tidak didukung, dan symbolic link ditolak. Jika pembuatan
-chapter berhasil tetapi penulisan metadata gagal atau berkonflik, file kosong
-mungkin tertinggal di folder dan tidak masuk daftar; pesan kesalahan menyebutkan
-nama file tersebut. Pembuatan metadata proyek yang gagal saat menulis juga dapat
-meninggalkan metadata belum lengkap. Tidak ada penguncian lintas instance dan
-pemeriksaan konflik tidak menutup semua race; gunakan satu instance dan buat backup.
+Saat membuka proyek lama, `.novelcraft.json` divalidasi lalu diimpor secara
+transaksional ke `.novelcraft-project.sqlite3`; JSON dan file Markdown tidak
+dihapus atau ditimpa. Daftar disimpan sebagai JSON dalam database, dengan identitas
+dan revisi untuk menolak perubahan usang. Catatan dan statistik tetap berada di
+`.novelcraft.sqlite3` yang terpisah dan tidak dimigrasikan ulang oleh langkah ini.
+
+**Cadangkan seluruh folder proyek sebelum upgrade atau downgrade**, termasuk kedua
+database, manifest lama bila ada, dan semua Markdown. Versi lama hanya membaca
+manifest JSON, sehingga tidak melihat perubahan daftar di SQLite; proyek baru
+tanpa JSON tidak bisa dibuka oleh versi lama. Jika JSON lama dibuat, diubah,
+dihapus atau menjadi symbolic link setelah migrasi, proyek menolak dibuka atau
+diubah; bandingkan salinan dan pulihkan JSON ke isi saat migrasi setelah membuat
+cadangan. Snapshot JSON asli juga tersimpan di database; tidak ada penggabungan
+otomatis. Jangan jalankan versi lama bersamaan. Jika database daftar hilang,
+proyek lama dapat terimpor lagi dari JSON lama, **bukan** dari daftar terakhir:
+pulihkan database dari backup. Proyek baru tanpa manifest tidak bisa dibuka tanpa
+database daftar.
+
+Metadata rusak, database asing/versi tidak didukung, dan symbolic link ditolak.
+Pembuatan database yang gagal dapat meninggalkan file kosong atau belum lengkap
+untuk diperiksa. Jika pembuatan chapter berhasil tetapi penulisan daftar gagal atau
+berkonflik, file kosong mungkin tertinggal dan tidak masuk daftar; pesan kesalahan
+menyebutkan namanya. SQLite menjaga transaksi daftar, tetapi pemeriksaan file dan
+JSON bukan penguncian filesystem dan tidak menutup semua race; dua proses yang
+menginisialisasi bersamaan bisa menyebabkan salah satunya gagal. Coba ulang setelah
+proses pertama selesai dan tetap buat backup.
 
 Writer meminta konfirmasi sebelum membuat draft baru, membuka file lain, atau
 menutup jendela jika draft memiliki perubahan yang belum disimpan. Saat operasi file Reader, Writer, Library, atau
@@ -174,8 +194,8 @@ edit atau hapus yang sudah usang ditolak, lalu batalkan edit dan muat ulang.
 Membuka atau menulis catatan berjalan di worker. Jika pembuatan database gagal,
 file kosong atau belum lengkap dapat tertinggal dan perlu diperiksa. Simpan backup
 folder proyek; jangan memindahkan database ketika aplikasi sedang membukanya.
-Chapter tetap file Markdown dan daftar chapter tetap `.novelcraft.json`, jadi
-migrasi semua metadata ke SQLite belum selesai. Pemeriksaan path bukan penguncian filesystem dan tidak menutup semua race.
+Chapter tetap berupa file Markdown; daftar chapter berada di database terpisah.
+Pemeriksaan path bukan penguncian filesystem dan tidak menutup semua race.
 
 **Target & streak** di panel proyek menyimpan target harian opsional dan
 menampilkan daftar kalender 31 hari terakhir. Jumlah harian adalah perubahan
@@ -592,7 +612,7 @@ file. Aturan dan integrasi Hyprland belum tersedia.
 - [x] Writing streak berdasarkan hari aktif dan daftar kalender 31 hari
 - [x] Mode Zen Writer: editor minimal dan fullscreen dengan pemulihan mode sebelumnya (bergantung compositor)
 - [x] Auto-save setiap 30 detik untuk file bernama (opt-in per file; tanpa pemulihan draft tanpa nama)
-- [ ] SQLite storage untuk semua metadata (daftar chapter masih JSON)
+- [x] SQLite untuk metadata yang sudah ada (daftar chapter, karakter, world-building, aktivitas, Library, bookmark, dan Settings)
 
 ### Phase 3 — Advanced Reader *(target: v0.5)*
 > Pengalaman membaca yang lebih baik.

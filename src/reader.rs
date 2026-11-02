@@ -473,9 +473,9 @@ impl Reader {
             );
             view = view.push(text("Ctrl+PageUp / Ctrl+PageDown: pindah bagian").size(12));
             if self.toc.is_empty() {
-                view = view.push(text("Daftar isi NCX tidak tersedia; gunakan nomor bagian.").size(12));
+                view = view.push(text("Daftar isi tidak tersedia; gunakan nomor bagian.").size(12));
             } else {
-                let label = if self.show_toc { "Tutup daftar isi" } else { "Daftar isi (NCX)" };
+                let label = if self.show_toc { "Tutup daftar isi" } else { "Daftar isi" };
                 let mut toggle_toc = button(label);
                 if !self.controls_blocked() {
                     toggle_toc = toggle_toc.on_press(Message::ToggleToc);

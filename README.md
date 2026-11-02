@@ -71,11 +71,13 @@ Pencarian teks EPUB menemukan bagian sebelumnya/berikutnya dengan mengubah teks
 ke huruf kecil Unicode (bukan case folding penuh), memutar kembali saat mencapai
 ujung, dan kembali ke awal bagian yang cocok. Pencarian tidak menyorot atau melompat ke posisi kata, hanya mencari teks
 hasil ekstraksi, dan dapat terasa lambat pada buku besar. Reader menampilkan daftar
-isi **NCX** jika tersedia dan tujuannya cocok dengan bagian spine. Pilihan daftar
-isi membuka awal bagian, bukan posisi jangkar spesifik; entri yang tidak cocok
-dilewati. Navigasi EPUB 3 berbasis dokumen `nav` belum didukung, begitu pula
-resolusi beberapa path relatif atau URL yang rumit. Jika daftar isi tidak tersedia,
-gunakan nomor bagian. Gambar dan gaya belum dirender. Markdown
+isi EPUB 3 `nav` atau NCX jika tujuannya cocok dengan bagian spine; `nav` yang
+valid didahulukan. Jika `nav` tidak tersedia atau tidak dapat digunakan, NCX
+menjadi cadangan. Pilihan daftar isi membuka awal bagian, bukan posisi jangkar
+spesifik; entri yang tidak cocok dilewati. Tautan eksternal, query URL, beberapa
+path yang kompleks, serta `nav` yang bukan XHTML UTF-8 valid atau lebih dari 2 MiB
+tidak didukung. Jika daftar isi tidak tersedia, gunakan nomor bagian. Gambar dan
+gaya belum dirender. Markdown
 memiliki tampilan dasar untuk judul, paragraf, daftar, penekanan, dan blok kode,
 serta pilihan untuk melihat sumber mentah. Tabel, gambar, HTML, dan elemen lain
 yang belum didukung dapat dilihat di mode sumber. Tautan tidak dibuka otomatis.
@@ -158,7 +160,7 @@ Daftar di bawah ini adalah **target MVP**, bukan fitur yang sudah selesai.
 ### 📖 Mode Baca (Reader)
 - [x] Buka file TXT dan Markdown UTF-8
 - [x] Buka EPUB sebagai teks, lompat ke bagian spine, dan cari bagian berdasarkan teks
-- [x] Daftar isi NCX dasar yang dipetakan ke bagian spine (tanpa navigasi jangkar)
+- [x] Daftar isi dasar EPUB 3 nav dan NCX dipetakan ke bagian spine (tanpa navigasi jangkar)
 - [x] Render Markdown dasar dan lihat sumber
 - [x] Atur ukuran font (A+/A-)
 - [x] Mode fokus Reader (sembunyikan sidebar; tanpa fullscreen)
@@ -354,7 +356,7 @@ bagian dari roadmap.
 
 ### Phase 3 — Advanced Reader *(target: v0.5)*
 > Pengalaman membaca yang lebih baik.
-- [ ] EPUB parsing lengkap (gambar, footnote, EPUB 3 nav dan navigasi jangkar)
+- [ ] EPUB parsing lengkap (gambar, footnote, navigasi jangkar, dan format nav lanjutan)
 - [ ] Bookmark & highlight dengan warna
 - [ ] Reading progress sync (per chapter)
 - [ ] Text-to-speech (via `piper` / `espeak-ng`)

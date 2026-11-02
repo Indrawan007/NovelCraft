@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, markdown, progress_bar, row, scrollable, text, text_editor, text_input};
+use iced::widget::{button, column, container, markdown, progress_bar, row, scrollable, text, text_editor, text_input, mouse_area};
 use iced::{highlighter, Element, Length, Task, Theme};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,6 +13,8 @@ pub struct Writer {
     target_input: String,
     project: Option<crate::project::Project>,
     chapter_title: String,
+    chapter_tree_collapsed: bool,
+    dragging_chapter: Option<usize>,
     reference: crate::reference::Reference,
     show_reference: bool,
     activity: crate::activity::Activity,
@@ -71,6 +73,10 @@ pub enum Message {
     DismissActivityNotice,
     ProjectLoaded(Result<Option<crate::project::Project>, String>),
     ChapterTitleChanged(String),
+    ToggleChapterTree,
+    StartChapterDrag(usize),
+    DropChapter(usize),
+    CancelChapterDrag,
     AddChapter,
     AttachChapter,
     ChapterAttached(Result<Option<crate::project::Project>, String>),
@@ -126,7 +132,7 @@ impl Writer {
 
     fn controls_blocked(&self) -> bool {
         self.busy || self.reference.is_busy() || self.activity.is_busy() || self.activity_pending || self.pending_discard.is_some() || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
-            || self.pending_chapter_rename.is_some() || self.pending_chapter_remove.is_some() || self.pending_autosave_confirmation
+            || self.pending_chapter_rename.is_some() || self.pending_chapter_remove.is_some() || self.pending_autosave_confirmation || self.dragging_chapter.is_some()
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -230,6 +236,8 @@ impl Writer {
                         self.show_activity = false;
                         self.activity_notice = None;
                         self.chapter_title.clear();
+                        self.chapter_tree_collapsed = false;
+                        self.dragging_chapter = None;
                         self.error = None;
                     }
                     Ok(None) => {}
@@ -237,6 +245,20 @@ impl Writer {
                 }
             }
             Message::ChapterTitleChanged(title) if !self.controls_blocked() => self.chapter_title = title,
+            Message::ToggleChapterTree if !self.controls_blocked() && self.project.is_some() => self.chapter_tree_collapsed = !self.chapter_tree_collapsed,
+            Message::StartChapterDrag(index) if !self.controls_blocked() && !self.chapter_tree_collapsed => {
+                if self.project.as_ref().and_then(|project| project.chapters().get(index)).is_some() {
+                    self.dragging_chapter = Some(index); self.error = None;
+                }
+            }
+            Message::DropChapter(to) => {
+                if let Some(index) = self.dragging_chapter.take() {
+                    if !self.controls_blocked() && index != to && self.project.as_ref().is_some_and(|project| to < project.chapters().len() && index < project.chapters().len()) {
+                        return self.start_chapter_change(crate::project::ChapterChange::Move { index, to });
+                    }
+                }
+            }
+            Message::CancelChapterDrag => self.dragging_chapter = None,
             Message::AddChapter if !self.controls_blocked() => {
                 if let Some(project) = self.project.clone() {
                     self.busy = true;
@@ -735,28 +757,42 @@ impl Writer {
                 attach = attach.on_press(Message::AttachChapter);
             }
             project_panel = project_panel.push(title).push(row![add, attach].spacing(4).wrap());
-            let mut chapters = iced::widget::Column::new().spacing(6).width(Length::Fill);
-            for (index, chapter) in project.chapters().iter().enumerate() {
-                let active = project.chapter_path(index).as_ref() == self.path.as_ref();
-                let label = format!("{:02}. {}{}", index + 1, chapter.title, if active { " (terbuka)" } else { "" });
-                let mut open_chapter = button(text(label).size(13)).width(Length::Fill);
-                if !self.controls_blocked() { open_chapter = open_chapter.on_press(Message::OpenChapter(index)); }
-                let mut rename = button(text("Judul").size(11));
-                let mut up = button(text("Atas").size(11));
-                let mut down = button(text("Bawah").size(11));
-                let mut remove = button(text("Hapus").size(11));
-                if !self.controls_blocked() {
-                    rename = rename.on_press(Message::RenameChapter(index));
-                    if index > 0 { up = up.on_press(Message::MoveChapterUp(index)); }
-                    if index + 1 < project.chapters().len() { down = down.on_press(Message::MoveChapterDown(index)); }
-                    remove = remove.on_press(Message::RemoveChapter(index));
-                }
-                chapters = chapters.push(open_chapter).push(
-                    row![rename, up, down, remove].spacing(4)
-                        .padding(iced::Padding { bottom: 4.0, ..iced::Padding::default() }).wrap(),
-                );
+            let mut tree_toggle = button(text(if self.chapter_tree_collapsed { "▸ Folder proyek" } else { "▾ Folder proyek" }).size(13)).width(Length::Fill);
+            if !self.controls_blocked() { tree_toggle = tree_toggle.on_press(Message::ToggleChapterTree); }
+            project_panel = project_panel.push(tree_toggle);
+            if let Some(index) = self.dragging_chapter {
+                project_panel = project_panel.push(text(format!("Menggeser chapter {}: lepaskan di chapter tujuan.", index + 1)).size(12));
+                project_panel = project_panel.push(button("Batal geser").on_press(Message::CancelChapterDrag));
             }
-            project_panel = project_panel.push(scrollable(chapters).height(Length::Fill));
+            if !self.chapter_tree_collapsed {
+                let mut chapters = iced::widget::Column::new().spacing(6).width(Length::Fill);
+                for (index, chapter) in project.chapters().iter().enumerate() {
+                    let active = project.chapter_path(index).as_ref() == self.path.as_ref();
+                    let label = format!("{:02}. {}{}", index + 1, chapter.title, if active { " (terbuka)" } else { "" });
+                    let mut open_chapter = button(text(label).size(13)).width(Length::Fill);
+                    if !self.controls_blocked() { open_chapter = open_chapter.on_press(Message::OpenChapter(index)); }
+                    let mut handle = mouse_area(container(text("⋮⋮").size(16)).padding([8, 4])).interaction(iced::mouse::Interaction::Grab);
+                    if !self.controls_blocked() { handle = handle.on_press(Message::StartChapterDrag(index)); }
+                    let mut rename = button(text("Judul").size(11));
+                    let mut up = button(text("Atas").size(11));
+                    let mut down = button(text("Bawah").size(11));
+                    let mut remove = button(text("Hapus").size(11));
+                    if !self.controls_blocked() {
+                        rename = rename.on_press(Message::RenameChapter(index));
+                        if index > 0 { up = up.on_press(Message::MoveChapterUp(index)); }
+                        if index + 1 < project.chapters().len() { down = down.on_press(Message::MoveChapterDown(index)); }
+                        remove = remove.on_press(Message::RemoveChapter(index));
+                    }
+                    let entry = column![
+                        row![text("└").size(12), handle, open_chapter].spacing(3).align_y(iced::Alignment::Center),
+                        row![rename, up, down, remove].spacing(4).padding(iced::Padding { bottom: 4.0, ..iced::Padding::default() }).wrap(),
+                    ].spacing(3);
+                    let mut drop_target = mouse_area(entry);
+                    if self.dragging_chapter.is_some() { drop_target = drop_target.on_release(Message::DropChapter(index)); }
+                    chapters = chapters.push(drop_target);
+                }
+                project_panel = project_panel.push(scrollable(chapters).height(Length::Fill));
+            }
         } else {
             project_panel = project_panel.push(text("Buat atau buka folder proyek untuk menyimpan chapter sebagai file Markdown.").size(12));
         }
@@ -1059,6 +1095,78 @@ async fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn drag_reorders_index_only_and_preserves_open_dirty_draft() {
+        use iced::widget::text_editor::{Action, Edit};
+        let dir = temporary_directory(); tokio::fs::create_dir_all(&dir).await.unwrap();
+        let project = crate::project::create(dir.clone()).await.unwrap();
+        let project = crate::project::add_chapter(project, "Satu".into()).await.unwrap();
+        let project = crate::project::add_chapter(project, "Dua".into()).await.unwrap();
+        let project = crate::project::add_chapter(project, "Tiga".into()).await.unwrap();
+        let first = project.chapter_path(0).unwrap(); let last = project.chapter_path(2).unwrap();
+        tokio::fs::write(&first, b"naskah satu").await.unwrap();
+        let mut writer = Writer::default();
+        let _ = writer.update(Message::ProjectLoaded(Ok(Some(project.clone()))));
+        writer.path = Some(first.clone());
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Insert('x'))));
+        let _ = writer.update(Message::StartChapterDrag(0));
+        assert_eq!(writer.dragging_chapter, Some(0)); assert!(writer.controls_blocked());
+        drop(writer.view(&Theme::Dark));
+        let _ = writer.update(Message::OpenChapter(1)); assert!(writer.pending_discard.is_none());
+        let _ = writer.update(Message::DropChapter(2));
+        assert!(writer.busy); assert_eq!(writer.dragging_chapter, None);
+        // Execute the same asynchronous project operation as the returned task.
+        let result = crate::project::change_chapter(project, crate::project::ChapterChange::Move { index: 0, to: 2 }).await;
+        let _ = writer.update(Message::ChapterChanged(result));
+        assert!(!writer.busy); assert!(writer.dirty);
+        assert_eq!(writer.path.as_ref(), Some(&first)); assert_eq!(writer.content.text().trim_end(), "x");
+        assert_eq!(writer.project.as_ref().unwrap().chapter_path(2).unwrap(), first);
+        assert_eq!(writer.project.as_ref().unwrap().chapter_path(1).unwrap(), last);
+        assert_eq!(tokio::fs::read(first).await.unwrap(), b"naskah satu");
+        assert_eq!(crate::project::open(dir.clone()).await.unwrap().chapters()[2].title, "Satu");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn drag_cancellation_same_target_invalid_target_and_tree_toggle_are_safe() {
+        let dir = temporary_directory(); tokio::fs::create_dir_all(&dir).await.unwrap();
+        let project = crate::project::add_chapter(crate::project::create(dir.clone()).await.unwrap(), "Satu".into()).await.unwrap();
+        let mut writer = Writer::default(); let _ = writer.update(Message::ProjectLoaded(Ok(Some(project))));
+        let _ = writer.update(Message::ToggleChapterTree); assert!(writer.chapter_tree_collapsed);
+        let _ = writer.update(Message::StartChapterDrag(0)); assert!(writer.dragging_chapter.is_none());
+        let _ = writer.update(Message::ToggleChapterTree); assert!(!writer.chapter_tree_collapsed);
+        let _ = writer.update(Message::StartChapterDrag(1)); assert!(writer.dragging_chapter.is_none());
+        for target in [0, 9] {
+            let _ = writer.update(Message::StartChapterDrag(0));
+            let _ = writer.update(Message::DropChapter(target));
+            assert!(!writer.busy); assert!(writer.dragging_chapter.is_none());
+        }
+        let _ = writer.update(Message::StartChapterDrag(0));
+        let _ = writer.update(Message::CancelChapterDrag);
+        let _ = writer.update(Message::DropChapter(0)); assert!(!writer.busy);
+        let _ = writer.update(Message::RemoveChapter(0)); assert!(writer.pending_chapter_remove.is_some());
+        let _ = writer.update(Message::StartChapterDrag(0)); assert!(writer.dragging_chapter.is_none());
+        assert_eq!(crate::project::open(dir.clone()).await.unwrap().chapters()[0].title, "Satu");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn drag_conflict_keeps_project_and_draft_in_writer() {
+        let dir = temporary_directory(); tokio::fs::create_dir_all(&dir).await.unwrap();
+        let project = crate::project::create(dir.clone()).await.unwrap();
+        let project = crate::project::add_chapter(project, "A".into()).await.unwrap();
+        let project = crate::project::add_chapter(project, "B".into()).await.unwrap();
+        let stale = project.clone(); let mut writer = Writer { dirty: true, project: Some(project), ..Writer::default() };
+        let external = crate::project::change_chapter(stale.clone(), crate::project::ChapterChange::Rename { index: 0, title: "Eksternal".into() }).await.unwrap();
+        let _ = writer.update(Message::StartChapterDrag(0)); let _ = writer.update(Message::DropChapter(1)); assert!(writer.busy);
+        let result = crate::project::change_chapter(stale, crate::project::ChapterChange::Move { index: 0, to: 1 }).await;
+        assert!(result.is_err()); let _ = writer.update(Message::ChapterChanged(result));
+        assert!(writer.error.is_some()); assert!(writer.dirty);
+        assert_eq!(writer.project.as_ref().unwrap().chapters()[0].title, "A");
+        assert_eq!(external.chapters()[0].title, "Eksternal");
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
 
     #[tokio::test]
     async fn chapter_switch_respects_unsaved_draft_and_new_draft_keeps_project() {

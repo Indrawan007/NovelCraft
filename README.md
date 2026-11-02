@@ -141,7 +141,18 @@ terbuka. Untuk menambahkan file yang sudah ada (termasuk yang dilepas), masukkan
 lalu gunakan **Tambah file**. File `.md` atau `.markdown` harus merupakan file
 biasa langsung di folder proyek; tidak dipindahkan atau diubah. Nama file harus
 berupa UTF-8 dan tidak boleh terdaftar dua kali. Pemeriksaan file bukan penguncian;
-file dapat berubah setelah dipilih. Tree view dan drag & drop belum ada.
+file dapat berubah setelah dipilih.
+
+Panel chapter menampilkan satu akar folder proyek yang dapat dilipat; chapter
+adalah daun di bawahnya. Pegang simbol **⋮⋮** di samping chapter dan lepaskan di
+chapter tujuan untuk memindahkan chapter ke posisi tujuan dalam daftar. Lepas di
+luar daftar, tekan Escape, atau pilih **Batal geser** untuk membatalkan. Tombol
+**Atas/Bawah** tetap tersedia sebagai alternatif. Perubahan hanya menyimpan urutan
+metadata, tidak memindahkan atau mengubah file Markdown dan tidak menutup draft.
+Saat menggeser, kontrol Writer dinonaktifkan sampai dilepas atau dibatalkan;
+konflik indeks ditolak dan perlu membuka ulang proyek. Pengguliran otomatis saat
+menyeret belum tersedia; gulir daftar sebelum mulai jika tujuan tidak terlihat.
+Tree saat ini hanya akar proyek dan chapter; kelompok/bagian bertingkat belum ada.
 
 Saat membuka proyek lama, `.novelcraft.json` divalidasi lalu diimpor secara
 transaksional ke `.novelcraft-project.sqlite3`; JSON dan file Markdown tidak
@@ -605,7 +616,7 @@ file. Aturan dan integrasi Hyprland belum tersedia.
 
 ### Phase 2 — Novel Writing Suite *(target: v0.3)*
 > Fitur khusus untuk menulis novel secara serius.
-- [ ] Chapter management lengkap (operasi daftar dan penambahan file lokal tersedia; tree view dan drag & drop belum)
+- [ ] Chapter management lengkap (tree satu akar dan drag & drop tersedia; kelompok/bagian bertingkat belum ada)
 - [x] Database karakter dasar: nama, deskripsi, relasi teks dan hubungan berarah antar-karakter
 - [x] World-building notes dasar: tempat, waktu, lore (catatan teks satu baris)
 - [x] Target kata harian per proyek (berdasarkan perubahan bersih chapter tersimpan)

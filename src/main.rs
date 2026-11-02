@@ -80,6 +80,20 @@ fn shortcut_event(event: iced::Event, status: event::Status, _: window::Id) -> O
     None
 }
 
+// Always cancel a gesture released outside its drop target, or when the window
+// loses pointer/focus. A target's own release message performs the move first;
+// cancellation is harmless once the gesture has finished.
+fn chapter_drag_event(event: iced::Event, _status: event::Status, _: window::Id) -> Option<Message> {
+    match event {
+        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left) | iced::mouse::Event::CursorLeft)
+        | iced::Event::Touch(iced::touch::Event::FingerLifted { .. } | iced::touch::Event::FingerLost { .. })
+        | iced::Event::Window(window::Event::Unfocused) => Some(Message::Writer(writer::Message::CancelChapterDrag)),
+        iced::Event::Keyboard(keyboard::Event::KeyPressed { key: keyboard::Key::Named(keyboard::key::Named::Escape), .. }) =>
+            Some(Message::Writer(writer::Message::CancelChapterDrag)),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum Page {
     #[default]
@@ -212,6 +226,7 @@ impl NovelCraft {
             window::close_requests().map(Message::CloseRequested),
             window::resize_events().map(|_| Message::WindowResized),
             event::listen_with(shortcut_event),
+            event::listen_with(chapter_drag_event),
             if self.writer.autosave_enabled() {
                 iced::time::every(std::time::Duration::from_secs(30)).map(|_| Message::Writer(writer::Message::AutosaveTick))
             } else { Subscription::none() },
@@ -267,6 +282,7 @@ impl NovelCraft {
                 Task::none()
             }
             Message::Navigate(page) => {
+                if page != Page::Writer { let _ = self.writer.update(writer::Message::CancelChapterDrag); }
                 let exit_zen = if self.zen_mode && page != Page::Writer { self.exit_zen() } else { Task::none() };
                 if self.page == Page::Reader && page != Page::Reader {
                     self.reader.suspend_scroll_position();

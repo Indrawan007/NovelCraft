@@ -133,8 +133,12 @@ menolak konfirmasi mempertahankan draft. Beralih proyek tidak mengganti isi edit
 File chapter tetap file Markdown biasa, dapat dibuka di editor lain, dan tetap
 mengikuti pemeriksaan konflik serta batasan penyimpanan Writer di bawah. **Simpan
 sebagai** menulis ke lokasi lain tetapi tidak mengubah daftar chapter proyek.
-Saat ini belum ada impor file chapter yang sudah ada, rename, hapus, urut ulang,
-tree view, drag & drop, atau autosave.
+Tombol **Judul** mengubah judul di metadata tanpa mengganti nama file; **Atas**
+dan **Bawah** mengubah urutan dalam daftar. **Hapus** meminta konfirmasi dan
+hanya menghapus entri dari daftar, bukan file Markdown atau draft yang sedang
+terbuka. File yang dilepas belum bisa ditambahkan kembali melalui daftar chapter;
+file tetap dapat dibuka melalui tombol **Buka** biasa. Saat ini belum ada impor
+file chapter yang sudah ada, tree view, drag & drop, atau autosave.
 
 Metadata proyek divalidasi dan perubahan eksternal diperiksa sebelum penulisan;
 metadata rusak, versi tidak didukung, dan symbolic link ditolak. Jika pembuatan
@@ -258,7 +262,7 @@ Daftar di bawah ini adalah **target MVP**, bukan fitur yang sudah selesai.
 - [x] Tema gelap NovelCraft dan tema bawaan Iced
 
 ### ✍️ Mode Tulis (Writer)
-- [x] Proyek chapter dasar: buat/buka folder proyek, tambah dan buka chapter Markdown
+- [x] Proyek chapter dasar: buat/buka folder, tambah, buka, ubah judul, susun ulang dan hapus entri chapter Markdown
 - [x] Draft baru dengan konfirmasi untuk perubahan yang belum disimpan
 - [x] Preview Markdown dasar di samping editor
 - [x] Mode fokus Writer (sembunyikan sidebar; tanpa fullscreen)
@@ -479,7 +483,7 @@ file. Aturan dan integrasi Hyprland belum tersedia.
 
 ### Phase 2 — Novel Writing Suite *(target: v0.3)*
 > Fitur khusus untuk menulis novel secara serius.
-- [ ] Chapter management lengkap (buat/buka proyek dan tambah/buka chapter sudah tersedia; ubah nama, hapus, susun ulang, tree view dan drag & drop belum)
+- [ ] Chapter management lengkap (operasi daftar dasar tersedia; impor file yang ada, tree view dan drag & drop belum)
 - [ ] Character database (nama, deskripsi, relasi)
 - [ ] World-building notes (tempat, waktu, lore)
 - [ ] Word count target harian (target sementara per draft sudah tersedia)

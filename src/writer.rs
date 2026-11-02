@@ -13,6 +13,9 @@ pub struct Writer {
     target_input: String,
     project: Option<crate::project::Project>,
     chapter_title: String,
+    pending_chapter_rename: Option<usize>,
+    chapter_rename_input: String,
+    pending_chapter_remove: Option<usize>,
     show_preview: bool,
     preview_items: Vec<markdown::Item>,
     preview_notice: Option<String>,
@@ -56,6 +59,16 @@ pub enum Message {
     AddChapter,
     ChapterAdded(Result<crate::project::Project, String>),
     OpenChapter(usize),
+    RenameChapter(usize),
+    ChapterRenameChanged(String),
+    ConfirmChapterRename,
+    CancelChapterRename,
+    MoveChapterUp(usize),
+    MoveChapterDown(usize),
+    RemoveChapter(usize),
+    ConfirmChapterRemove,
+    CancelChapterRemove,
+    ChapterChanged(Result<crate::project::Project, String>),
     ConfirmDiscard,
     CancelDiscard,
     Opened(Result<Option<(PathBuf, String)>, String>),
@@ -87,6 +100,7 @@ impl Writer {
 
     fn controls_blocked(&self) -> bool {
         self.busy || self.pending_discard.is_some() || self.pending_format_save.is_some() || self.pending_overwrite.is_some()
+            || self.pending_chapter_rename.is_some() || self.pending_chapter_remove.is_some()
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -168,6 +182,53 @@ impl Writer {
                     }
                 }
             }
+            Message::RenameChapter(index) if !self.controls_blocked() => {
+                if let Some(chapter) = self.project.as_ref().and_then(|project| project.chapters().get(index)) {
+                    self.chapter_rename_input = chapter.title.clone();
+                    self.pending_chapter_rename = Some(index);
+                    self.error = None;
+                }
+            }
+            Message::ChapterRenameChanged(title) if !self.busy && self.pending_chapter_rename.is_some() => {
+                self.chapter_rename_input = title;
+            }
+            Message::ConfirmChapterRename if !self.busy => {
+                if let Some(index) = self.pending_chapter_rename.take() {
+                    return self.start_chapter_change(crate::project::ChapterChange::Rename {
+                        index, title: self.chapter_rename_input.clone(),
+                    });
+                }
+            }
+            Message::CancelChapterRename if !self.busy => self.pending_chapter_rename = None,
+            Message::MoveChapterUp(index) if !self.controls_blocked() => {
+                if let Some(to) = index.checked_sub(1) {
+                    return self.start_chapter_change(crate::project::ChapterChange::Move { index, to });
+                }
+            }
+            Message::MoveChapterDown(index) if !self.controls_blocked() => {
+                if let Some(to) = index.checked_add(1) {
+                    return self.start_chapter_change(crate::project::ChapterChange::Move { index, to });
+                }
+            }
+            Message::RemoveChapter(index) if !self.controls_blocked() => {
+                if self.project.as_ref().and_then(|project| project.chapters().get(index)).is_some() {
+                    self.pending_chapter_remove = Some(index);
+                    self.error = None;
+                }
+            }
+            Message::ConfirmChapterRemove if !self.busy => {
+                if let Some(index) = self.pending_chapter_remove.take() {
+                    return self.start_chapter_change(crate::project::ChapterChange::Remove { index });
+                }
+            }
+            Message::CancelChapterRemove if !self.busy => self.pending_chapter_remove = None,
+            Message::ChapterChanged(result) => {
+                self.busy = false;
+                match result {
+                    Ok(project) => { self.project = Some(project); self.error = None; }
+                    Err(error) => self.error = Some(error),
+                }
+            }
             Message::ConfirmDiscard if !self.busy => {
                 if let Some(action) = self.pending_discard.take() {
                     return self.perform_action(action);
@@ -237,6 +298,16 @@ impl Writer {
             _ => {}
         }
         Task::none()
+    }
+
+    fn start_chapter_change(&mut self, change: crate::project::ChapterChange) -> Task<Message> {
+        if let Some(project) = self.project.clone() {
+            self.busy = true;
+            self.error = None;
+            Task::perform(crate::project::change_chapter(project, change), Message::ChapterChanged)
+        } else {
+            Task::none()
+        }
     }
 
     fn start_save(&mut self, save_as: bool) -> Task<Message> {
@@ -391,6 +462,26 @@ impl Writer {
                 button("Batal").on_press(Message::CancelOverwrite),
             ].spacing(12));
         }
+        if let Some(index) = self.pending_chapter_rename {
+            if let Some(chapter) = self.project.as_ref().and_then(|project| project.chapters().get(index)) {
+                view = view.push(text(format!("Ubah judul chapter: {}", chapter.title)));
+                view = view.push(text_input("Judul chapter", &self.chapter_rename_input).on_input(Message::ChapterRenameChanged));
+                view = view.push(row![
+                    button("Simpan judul").on_press(Message::ConfirmChapterRename),
+                    button("Batal").on_press(Message::CancelChapterRename),
+                ].spacing(12));
+            }
+        }
+        if let Some(index) = self.pending_chapter_remove {
+            if let Some(chapter) = self.project.as_ref().and_then(|project| project.chapters().get(index)) {
+                view = view.push(text(format!("Hapus '{}' dari daftar proyek?", chapter.title)));
+                view = view.push(text("File Markdown dan draft yang sedang dibuka tidak dihapus. File belum dapat ditambahkan kembali lewat daftar chapter.").size(14));
+                view = view.push(row![
+                    button("Hapus dari daftar").on_press(Message::ConfirmChapterRemove),
+                    button("Batal").on_press(Message::CancelChapterRemove),
+                ].spacing(12));
+            }
+        }
         if let Some(error) = &self.error {
             view = view.push(text(error));
         }
@@ -452,7 +543,20 @@ impl Writer {
                 let label = format!("{:02}. {}{}", index + 1, chapter.title, if active { " (terbuka)" } else { "" });
                 let mut open_chapter = button(text(label).size(13)).width(Length::Fill);
                 if !self.controls_blocked() { open_chapter = open_chapter.on_press(Message::OpenChapter(index)); }
-                chapters = chapters.push(open_chapter);
+                let mut rename = button(text("Judul").size(11));
+                let mut up = button(text("Atas").size(11));
+                let mut down = button(text("Bawah").size(11));
+                let mut remove = button(text("Hapus").size(11));
+                if !self.controls_blocked() {
+                    rename = rename.on_press(Message::RenameChapter(index));
+                    if index > 0 { up = up.on_press(Message::MoveChapterUp(index)); }
+                    if index + 1 < project.chapters().len() { down = down.on_press(Message::MoveChapterDown(index)); }
+                    remove = remove.on_press(Message::RemoveChapter(index));
+                }
+                chapters = chapters.push(open_chapter).push(
+                    row![rename, up, down, remove].spacing(4)
+                        .padding(iced::Padding { bottom: 4.0, ..iced::Padding::default() }).wrap(),
+                );
             }
             project_panel = project_panel.push(scrollable(chapters).height(Length::Fill));
         } else {
@@ -771,6 +875,44 @@ mod tests {
         assert!(writer.project.is_some());
         let _ = writer.update(Message::NewDraft);
         assert!(writer.project.is_some());
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn chapter_metadata_dialogs_preserve_dirty_draft_and_confirmation() {
+        use iced::widget::text_editor::{Action, Edit};
+        let dir = std::env::temp_dir().join(format!("novelcraft-writer-chapter-actions-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let project = crate::project::create(dir.clone()).await.unwrap();
+        let project = crate::project::add_chapter(project, "Awal".into()).await.unwrap();
+        let path = project.chapter_path(0).unwrap();
+        tokio::fs::write(&path, "naskah asli").await.unwrap();
+        let mut writer = Writer::default();
+        let _ = writer.update(Message::ProjectLoaded(Ok(Some(project.clone()))));
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Insert('x'))));
+        let before = writer.content.text();
+        let _ = writer.update(Message::RemoveChapter(0));
+        assert_eq!(writer.pending_chapter_remove, Some(0));
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Insert('y'))));
+        let _ = writer.update(Message::MoveChapterDown(0));
+        assert_eq!(writer.content.text(), before);
+        assert!(!writer.is_busy());
+        let _ = writer.update(Message::CancelChapterRemove);
+        assert_eq!(writer.pending_chapter_remove, None);
+        assert_eq!(writer.project.as_ref().unwrap().chapters().len(), 1);
+        let _ = writer.update(Message::RenameChapter(0));
+        let _ = writer.update(Message::ChapterRenameChanged("Baru".into()));
+        let _ = writer.update(Message::CancelChapterRename);
+        assert_eq!(writer.project.as_ref().unwrap().chapters()[0].title, "Awal");
+        let _ = writer.update(Message::RemoveChapter(0));
+        let _ = writer.update(Message::ConfirmChapterRemove);
+        assert!(writer.is_busy());
+        let result = crate::project::change_chapter(project, crate::project::ChapterChange::Remove { index: 0 }).await;
+        let _ = writer.update(Message::ChapterChanged(result));
+        assert!(writer.project.as_ref().unwrap().chapters().is_empty());
+        assert_eq!(writer.content.text(), before);
+        assert!(writer.has_unsaved_changes());
+        assert_eq!(tokio::fs::read_to_string(path).await.unwrap(), "naskah asli");
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 

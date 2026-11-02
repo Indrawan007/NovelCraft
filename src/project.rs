@@ -132,6 +132,46 @@ pub async fn add_chapter(mut project: Project, title: String) -> Result<Project,
     Ok(project)
 }
 
+#[derive(Debug, Clone)]
+pub enum ChapterChange {
+    Rename { index: usize, title: String },
+    Move { index: usize, to: usize },
+    Remove { index: usize },
+}
+
+/// Changes only the index; chapter filenames and contents are never changed.
+pub async fn change_chapter(mut project: Project, change: ChapterChange) -> Result<Project, String> {
+    match change {
+        ChapterChange::Rename { index, title } => {
+            let title = title.trim().to_owned();
+            validate_title(&title)?;
+            let chapter = project.manifest.chapters.get_mut(index).ok_or("Chapter tidak ditemukan.")?;
+            chapter.title = title;
+        }
+        ChapterChange::Move { index, to } => {
+            if index >= project.manifest.chapters.len() || to >= project.manifest.chapters.len() {
+                return Err("Posisi chapter tidak valid.".into());
+            }
+            let chapter = project.manifest.chapters.remove(index);
+            project.manifest.chapters.insert(to, chapter);
+        }
+        ChapterChange::Remove { index } => {
+            if index >= project.manifest.chapters.len() { return Err("Chapter tidak ditemukan.".into()); }
+            project.manifest.chapters.remove(index);
+        }
+    }
+    let manifest_path = project.folder.join(MANIFEST);
+    if read_manifest(&manifest_path).await? != project.snapshot {
+        return Err("Metadata proyek berubah di luar aplikasi; buka ulang proyek.".into());
+    }
+    let bytes = serde_json::to_vec_pretty(&project.manifest).map_err(|e| e.to_string())?;
+    let expected = crate::writer::FileState::Present(project.snapshot.clone());
+    crate::writer::atomic_write_regular_checked(&manifest_path, &bytes, &expected).await
+        .map_err(|e| format!("Gagal menyimpan daftar proyek: {e}"))?;
+    project.snapshot = bytes;
+    Ok(project)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +221,51 @@ mod tests {
         assert!(open(dir.clone()).await.is_err());
         assert_eq!(tokio::fs::read(dir.join(MANIFEST)).await.unwrap(), b"invalid");
         assert!(!dir.join("chapter-1.md").exists());
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rename_move_and_remove_only_change_the_index() {
+        let dir = temp_dir();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let project = create(dir.clone()).await.unwrap();
+        let project = add_chapter(project, "Satu".into()).await.unwrap();
+        let project = add_chapter(project, "Dua".into()).await.unwrap();
+        let first = project.chapter_path(0).unwrap();
+        let second = project.chapter_path(1).unwrap();
+        tokio::fs::write(&first, "naskah satu").await.unwrap();
+        tokio::fs::write(&second, "naskah dua").await.unwrap();
+        let project = change_chapter(project, ChapterChange::Rename { index: 0, title: " Prolog ".into() }).await.unwrap();
+        assert_eq!(project.chapters()[0].title, "Prolog");
+        let project = change_chapter(project, ChapterChange::Move { index: 0, to: 1 }).await.unwrap();
+        assert_eq!(project.chapter_path(1).unwrap(), first);
+        let project = change_chapter(project, ChapterChange::Remove { index: 1 }).await.unwrap();
+        assert_eq!(project.chapters().len(), 1);
+        assert_eq!(project.chapter_path(0).unwrap(), second);
+        assert_eq!(tokio::fs::read_to_string(&first).await.unwrap(), "naskah satu");
+        assert_eq!(tokio::fs::read_to_string(&second).await.unwrap(), "naskah dua");
+        let reopened = open(dir.clone()).await.unwrap();
+        assert_eq!(reopened.chapters()[0].title, "Dua");
+        assert_eq!(reopened.chapter_path(0).unwrap(), second);
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn changes_reject_invalid_input_and_stale_snapshots() {
+        let dir = temp_dir();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let project = add_chapter(create(dir.clone()).await.unwrap(), "Satu".into()).await.unwrap();
+        let bytes = tokio::fs::read(dir.join(MANIFEST)).await.unwrap();
+        assert!(change_chapter(project.clone(), ChapterChange::Rename { index: 0, title: "  ".into() }).await.is_err());
+        assert!(change_chapter(project.clone(), ChapterChange::Move { index: 0, to: 1 }).await.is_err());
+        assert!(change_chapter(project.clone(), ChapterChange::Remove { index: 10 }).await.is_err());
+        assert_eq!(tokio::fs::read(dir.join(MANIFEST)).await.unwrap(), bytes);
+        tokio::fs::write(dir.join(MANIFEST), b"external").await.unwrap();
+        for change in [ChapterChange::Rename { index: 0, title: "Dua".into() }, ChapterChange::Move { index: 0, to: 0 }, ChapterChange::Remove { index: 0 }] {
+            assert!(change_chapter(project.clone(), change).await.is_err());
+            assert_eq!(tokio::fs::read(dir.join(MANIFEST)).await.unwrap(), b"external");
+        }
+        assert!(project.chapter_path(0).unwrap().exists());
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 

@@ -701,10 +701,10 @@ impl NovelCraft {
             }
         }
         let sidebar_content: Element<'_, Message> = if is_workspace && compact {
-            let mut menu = button(text("Menu").size(12))
+            let mut menu = button(text("Menu").size(11))
                 .width(Length::Fill)
-                .padding([9, 4])
-                .style(mockup_style::secondary);
+                .height(40)
+                .style(mockup_style::navigation_menu);
             let action = match self.page {
                 Page::Writer if self.writer.can_toggle_tools() => Some(Message::Writer(writer::Message::ToggleTools)),
                 Page::Reader if self.reader.can_toggle_tools() => Some(Message::Reader(reader::Message::ToggleTools)),
@@ -714,34 +714,24 @@ impl NovelCraft {
             let brand = container(
                 row![
                     horizontal_space(),
-                    text("N").size(17).font(iced::Font::MONOSPACE).color(theme.palette().primary),
+                    text("N").size(16).font(iced::Font::MONOSPACE).color(theme.palette().primary),
                     horizontal_space(),
                 ].align_y(iced::Alignment::Center),
             )
                 .width(Length::Fill)
-                .padding([8, 0])
-                .style(mockup_style::card);
-            let workspace = if self.page == Page::Reader { "PEMBACA" } else { "PENULIS" };
-            column![
-                brand,
-                container(text(workspace).size(9).color(mockup_style::subtle(&theme)))
-                    .width(Length::Fill).center_x(Length::Fill),
-                menu,
-            ]
-                .spacing(10)
-                .width(Length::Fill)
-                .into()
+                .padding([4, 0]);
+            column![brand, menu].spacing(8).width(Length::Fill).into()
         } else if is_workspace && !sidebar_hidden {
             scrollable(navigation).height(Length::Fill).into()
         } else {
             navigation.into()
         };
-        let sidebar_width = if is_workspace && compact { 88_u16 }
+        let sidebar_width = if is_workspace && compact { 56_u16 }
             else if sidebar_hidden { 0_u16 }
             else if is_workspace { 280_u16 }
             else { 200_u16 };
         let sidebar_padding = if is_workspace && compact {
-            iced::Padding { top: 16.0, right: 10.0, bottom: 12.0, left: 10.0 }
+            iced::Padding { top: 12.0, right: 6.0, bottom: 12.0, left: 6.0 }
         } else if sidebar_hidden {
             iced::Padding::default()
         } else {

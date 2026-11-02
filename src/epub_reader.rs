@@ -1,4 +1,5 @@
 use epub::doc::{EpubDoc, NavPoint};
+use std::borrow::Cow;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,9 +89,29 @@ fn normalize_archive_path(path: &Path) -> Option<PathBuf> {
     Some(result)
 }
 
+// HTML5 EPUB navigation documents commonly include this empty doctype. Strip
+// only this exact declaration in the prolog; keep DTD/entity processing disabled.
+fn without_html5_doctype(xml: &str) -> Cow<'_, str> {
+    let mut rest = xml.trim_start_matches('\u{feff}').trim_start();
+    if rest.starts_with("<?xml") {
+        let Some((_, after_declaration)) = rest.split_once("?>") else { return Cow::Borrowed(xml) };
+        rest = after_declaration.trim_start();
+    }
+    const DOCTYPE: &str = "<!DOCTYPE html>";
+    if !rest.starts_with(DOCTYPE) {
+        return Cow::Borrowed(xml);
+    }
+    let index = xml.len() - rest.len();
+    let mut cleaned = String::with_capacity(xml.len() - DOCTYPE.len());
+    cleaned.push_str(&xml[..index]);
+    cleaned.push_str(&xml[index + DOCTYPE.len()..]);
+    Cow::Owned(cleaned)
+}
+
 fn parse_nav(xml: &str, nav_path: &Path, section_paths: &[Option<PathBuf>]) -> Option<Vec<TocEntry>> {
+    let xml = without_html5_doctype(xml);
     let options = roxmltree::ParsingOptions { nodes_limit: 100_000, ..Default::default() };
-    let doc = roxmltree::Document::parse_with_options(xml, options).ok()?;
+    let doc = roxmltree::Document::parse_with_options(xml.as_ref(), options).ok()?;
     let nav = doc.descendants().find(|node| {
         node.has_tag_name((XHTML_NS, "nav"))
             && node.attribute((EPUB_NS, "type")).is_some_and(|kind| kind.split_ascii_whitespace().any(|value| value == "toc"))
@@ -203,6 +224,20 @@ mod tests {
         for href in ["https://example.org/file", "//example.org/a", "/absolute", "../../../outside", "../first.xhtml?x=1", "..\\first.xhtml"] {
             assert_eq!(resolve_nav_path(nav, href), None, "{href}");
         }
+    }
+
+    #[test]
+    fn accepts_simple_html5_doctype_but_keeps_other_dtds_disabled() {
+        let prefix = r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="first.xhtml">One</a></li></ol></nav></body></html>"#;
+        let nav = Path::new("OEBPS/nav.xhtml");
+        let paths = [Some(PathBuf::from("OEBPS/first.xhtml"))];
+        for xml in [format!("<!DOCTYPE html>{prefix}"), format!("<?xml version=\"1.0\"?>\n<!DOCTYPE html>{prefix}")] {
+            assert_eq!(parse_nav(&xml, nav, &paths).unwrap().len(), 1);
+        }
+        let dtd = format!("<!DOCTYPE html [<!ENTITY evil 'bad'>]>{prefix}");
+        assert!(parse_nav(&dtd, nav, &paths).is_none());
+        let inside = "<html><![CDATA[<!DOCTYPE html>]]></html>";
+        assert_eq!(without_html5_doctype(inside), inside);
     }
 
     #[test]

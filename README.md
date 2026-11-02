@@ -75,8 +75,8 @@ isi EPUB 3 `nav` atau NCX jika tujuannya cocok dengan bagian spine; `nav` yang
 valid didahulukan. Jika `nav` tidak tersedia atau tidak dapat digunakan, NCX
 menjadi cadangan. Pilihan daftar isi membuka awal bagian, bukan posisi jangkar
 spesifik; entri yang tidak cocok dilewati. Tautan eksternal, query URL, beberapa
-path yang kompleks, serta `nav` yang bukan XHTML UTF-8 valid atau lebih dari 2 MiB
-tidak didukung. Jika daftar isi tidak tersedia, gunakan nomor bagian. Gambar dan
+path yang kompleks, serta `nav` yang bukan XHTML UTF-8 valid, memiliki DTD
+selain `<!DOCTYPE html>`, atau lebih dari 2 MiB tidak didukung. Jika daftar isi tidak tersedia, gunakan nomor bagian. Gambar dan
 gaya belum dirender. Markdown
 memiliki tampilan dasar untuk judul, paragraf, daftar, penekanan, dan blok kode,
 serta pilihan untuk melihat sumber mentah. Tabel, gambar, HTML, dan elemen lain

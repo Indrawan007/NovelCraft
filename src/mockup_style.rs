@@ -48,6 +48,14 @@ pub fn chrome(theme: &Theme) -> container::Style {
     container::Style::default().background(raised(theme))
 }
 
+pub fn sidebar(theme: &Theme) -> container::Style {
+    container::Style::default().background(raised(theme)).border(Border {
+        color: theme.palette().text.scale_alpha(0.08),
+        width: 1.0,
+        radius: 0.0.into(),
+    })
+}
+
 pub fn card(theme: &Theme) -> container::Style {
     container::Style::default().background(raised(theme)).border(Border {
         color: theme.palette().text.scale_alpha(0.10), width: 1.0, radius: 10.0.into(),

@@ -711,18 +711,37 @@ impl NovelCraft {
                 _ => None,
             };
             if let Some(action) = action { menu = menu.on_press(action); }
-            column![menu].width(Length::Fill).into()
+            let brand = container(
+                row![
+                    horizontal_space(),
+                    text("N").size(17).font(iced::Font::MONOSPACE).color(theme.palette().primary),
+                    horizontal_space(),
+                ].align_y(iced::Alignment::Center),
+            )
+                .width(Length::Fill)
+                .padding([8, 0])
+                .style(mockup_style::card);
+            let workspace = if self.page == Page::Reader { "PEMBACA" } else { "PENULIS" };
+            column![
+                brand,
+                container(text(workspace).size(9).color(mockup_style::subtle(&theme)))
+                    .width(Length::Fill).center_x(Length::Fill),
+                menu,
+            ]
+                .spacing(10)
+                .width(Length::Fill)
+                .into()
         } else if is_workspace && !sidebar_hidden {
             scrollable(navigation).height(Length::Fill).into()
         } else {
             navigation.into()
         };
-        let sidebar_width = if is_workspace && compact { 64_u16 }
+        let sidebar_width = if is_workspace && compact { 88_u16 }
             else if sidebar_hidden { 0_u16 }
             else if is_workspace { 280_u16 }
             else { 200_u16 };
         let sidebar_padding = if is_workspace && compact {
-            iced::Padding { top: 12.0, right: 8.0, bottom: 12.0, left: 8.0 }
+            iced::Padding { top: 16.0, right: 10.0, bottom: 12.0, left: 10.0 }
         } else if sidebar_hidden {
             iced::Padding::default()
         } else {
@@ -732,7 +751,7 @@ impl NovelCraft {
             .width(sidebar_width)
             .height(Length::Fill)
             .padding(sidebar_padding)
-            .style(mockup_style::chrome);
+            .style(mockup_style::sidebar);
         let page: Element<'_, Message> = match self.page {
             Page::Library => self.library.view(&theme).map(Message::Library),
             Page::Writer => self.writer.view(&theme).map(Message::Writer),

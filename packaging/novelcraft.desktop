@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=NovelCraft
+GenericName=Novel Reader and Writer
+GenericName[id]=Pembaca dan Penulis Novel
+Comment=Read and write novels offline
+Comment[id]=Baca dan tulis novel secara offline
+Exec=novelcraft
+Icon=novelcraft
+Terminal=false
+Categories=Office;WordProcessor;Viewer;
+Keywords=novel;reading;writing;epub;markdown;

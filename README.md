@@ -369,8 +369,29 @@ yay -S novelcraft
 
 ### Desktop Entry
 
-Desktop entry dan aturan Hyprland belum tersedia; integrasi sistem merupakan
-bagian dari roadmap.
+Launcher dan ikon tersedia untuk instalasi per pengguna. Perintah berikut
+memasang binary release ke `~/.local/bin` dan launcher/ikon ke direktori data
+XDG (atau `~/.local/share` jika `XDG_DATA_HOME` tidak absolut):
+
+```bash
+cargo build --release --locked
+case "${XDG_DATA_HOME:-}" in
+  /*) data_home="$XDG_DATA_HOME" ;;
+  *)  data_home="$HOME/.local/share" ;;
+esac
+install -Dm755 target/release/novelcraft "$HOME/.local/bin/novelcraft"
+install -Dm644 packaging/novelcraft.desktop "$data_home/applications/novelcraft.desktop"
+install -Dm644 packaging/novelcraft.svg "$data_home/icons/hicolor/scalable/apps/novelcraft.svg"
+```
+
+Perintah `install` mengganti file dengan nama yang sama. Pastikan `~/.local/bin`
+ada dalam `PATH` **sesi desktop** yang menjalankan launcher; jika tidak, menu
+mungkin muncul tetapi gagal menjalankan aplikasi. Segarkan menu atau masuk ulang
+jika entri belum muncul. Launcher tidak mendaftarkan asosiasi file dan belum
+mendukung membuka file lewat argumen; gunakan tombol Buka di aplikasi. Periksa
+instalasi lokal dengan `desktop-file-validate packaging/novelcraft.desktop`
+(paket `desktop-file-utils` di Arch). Portal Wayland tetap diperlukan untuk dialog
+file. Aturan dan integrasi Hyprland belum tersedia.
 
 ---
 
@@ -453,6 +474,7 @@ NovelCraft/
 ├── README.md        # Visi, status, dan roadmap
 ├── AGENT.md         # Pedoman pengembangan
 ├── mockup.html      # Referensi desain antarmuka
+├── packaging/       # Launcher desktop dan ikon SVG
 ├── src/
 │   ├── main.rs        # Jendela Iced, state, dan navigasi dasar
 │   ├── bookmarks.rs   # Penanda baca lokal

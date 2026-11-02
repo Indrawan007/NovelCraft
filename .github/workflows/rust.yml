@@ -20,7 +20,11 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libfontconfig1-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get install -y pkg-config libfontconfig1-dev libwayland-dev libxkbcommon-dev desktop-file-utils
+      - name: Validate desktop entry and icon
+        run: |
+          desktop-file-validate packaging/novelcraft.desktop
+          python3 -c 'import xml.etree.ElementTree as ET; assert ET.parse("packaging/novelcraft.svg").getroot().tag == "{http://www.w3.org/2000/svg}svg"'
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check all targets

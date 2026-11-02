@@ -174,9 +174,8 @@ edit atau hapus yang sudah usang ditolak, lalu batalkan edit dan muat ulang.
 Membuka atau menulis catatan berjalan di worker. Jika pembuatan database gagal,
 file kosong atau belum lengkap dapat tertinggal dan perlu diperiksa. Simpan backup
 folder proyek; jangan memindahkan database ketika aplikasi sedang membukanya.
-Chapter tetap file Markdown dan daftar chapter tetap `.novelcraft.json`; settings,
-Library, dan bookmark juga masih JSON, jadi migrasi semua metadata ke SQLite belum
-selesai. Pemeriksaan path bukan penguncian filesystem dan tidak menutup semua race.
+Chapter tetap file Markdown dan daftar chapter tetap `.novelcraft.json`; Library
+dan bookmark juga masih JSON, jadi migrasi semua metadata ke SQLite belum selesai. Pemeriksaan path bukan penguncian filesystem dan tidak menutup semua race.
 
 **Target & streak** di panel proyek menyimpan target harian opsional dan
 menampilkan daftar kalender 31 hari terakhir. Jumlah harian adalah perubahan
@@ -363,14 +362,26 @@ Pilihan tema lama yang tersimpan tetap dipertahankan. Tema berlaku pada antarmuk
 dan Markdown Reader/preview Writer. Syntax highlighting editor tetap menggunakan
 palet gelap bawaan Iced yang terpisah.
 
-Tema dan ukuran font Reader tersimpan di `$XDG_CONFIG_HOME/novelcraft/settings.json`, atau
-`~/.config/novelcraft/settings.json` jika `XDG_CONFIG_HOME` tidak absolut. File
-rusak, tema/ukuran font tidak valid, dan symbolic link ditolak tanpa ditimpa; perbaiki file
-lalu muat ulang di Settings. Jika penyimpanan gagal, tema aktif tidak berubah.
-Penulisan memakai file sementara dan rename; di Linux file hasil simpan privat
-(0600), dan ACL/atribut tambahan tidak dipertahankan. Tidak ada sinkronisasi atau
-penguncian antar-instance; perubahan antara pemeriksaan terakhir dan rename
-masih dapat terlewat. Hindari menjalankan beberapa instance bersamaan.
+Tema dan ukuran font Reader disimpan di `$XDG_CONFIG_HOME/novelcraft/settings.sqlite3`,
+atau `~/.config/novelcraft/settings.sqlite3` jika `XDG_CONFIG_HOME` tidak absolut.
+Saat pertama kali dimuat, `settings.json` lama divalidasi dan diimpor ke SQLite
+secara transaksional; file JSON asli tidak dihapus atau ditimpa. Nilai tambahan
+JSON yang belum dikenal juga disimpan. Jika tidak ada JSON lama, pengaturan default
+dipakai. Database lain, versi database tidak didukung, data rusak, dan symbolic
+link ditolak. Jika inisialisasi database gagal, file database kosong atau belum
+lengkap dapat tertinggal; periksa sebelum mencoba lagi.
+
+**Cadangkan kedua file sebelum upgrade atau downgrade.** Versi lama hanya membaca
+`settings.json` dan tidak melihat perubahan baru di SQLite. Setelah migrasi, jika
+JSON lama dibuat, diubah, dihapus, atau menjadi symbolic link, Settings menolak
+dimuat/disimpan alih-alih menggabungkan perubahan secara diam-diam. Bandingkan
+kedua salinan dan pulihkan JSON ke isi saat migrasi untuk melanjutkan, setelah
+membuat cadangan; tidak ada penggabungan otomatis. JSON juga disimpan sebagai
+snapshot dalam database. Pemeriksaan file bukan penguncian filesystem dan tidak
+menutup semua race, jadi hindari penggunaan versi lama bersamaan. Jika Settings
+gagal dimuat, perbaiki masalah dan pilih **Coba muat ulang Settings**; jika
+penyimpanan gagal, tema aktif tidak berubah. SQLite mengatur transaksi penulisan,
+dan database baru dibuat dengan izin 0600 di Unix.
 
 ---
 

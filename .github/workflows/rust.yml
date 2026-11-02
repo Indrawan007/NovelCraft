@@ -61,7 +61,7 @@ jobs:
           }
           trap on_error ERR
           stage=install
-          sudo apt-get install -y xvfb xdotool imagemagick mesa-vulkan-drivers
+          sudo apt-get install -y xvfb xdotool imagemagick mesa-vulkan-drivers libxkbcommon-x11-0
           stage=build
           cargo build --locked
           export WINIT_UNIX_BACKEND=x11

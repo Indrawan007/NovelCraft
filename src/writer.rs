@@ -13,6 +13,8 @@ pub struct Writer {
     target_input: String,
     project: Option<crate::project::Project>,
     show_tools: bool,
+    tool_section: Option<ToolSection>,
+    chapter_actions: Option<usize>,
     chapter_title: String,
     chapter_tree_collapsed: bool,
     dragging_chapter: Option<usize>,
@@ -41,6 +43,9 @@ pub struct Writer {
     error: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolSection { File, Project, Target }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingAction {
     NewDraft,
@@ -63,6 +68,8 @@ pub enum Message {
     TargetChanged(String),
     Shortcut(crate::shortcuts::Shortcut),
     ToggleTools,
+    ToggleToolSection(ToolSection),
+    ToggleChapterActions(usize),
     TogglePreview,
     PreviewRefresh(u64),
     PreviewLink(markdown::Url),
@@ -175,6 +182,14 @@ impl Writer {
                     }
                 }
             }
+            Message::ToggleToolSection(section) if !self.controls_blocked() && self.show_tools => {
+                self.tool_section = if self.tool_section == Some(section) { None } else { Some(section) };
+            }
+            Message::ToggleChapterActions(index) if !self.controls_blocked() && self.show_tools => {
+                if self.project.as_ref().and_then(|project| project.chapters().get(index)).is_some() {
+                    self.chapter_actions = if self.chapter_actions == Some(index) { None } else { Some(index) };
+                }
+            }
             Message::TogglePreview if !self.controls_blocked() => {
                 self.show_preview = !self.show_preview;
                 self.preview_notice = None;
@@ -269,6 +284,7 @@ impl Writer {
                         self.activity_notice = None;
                         self.chapter_title.clear();
                         self.chapter_tree_collapsed = false;
+                        self.chapter_actions = None;
                         self.dragging_chapter = None;
                         self.error = None;
                     }
@@ -372,7 +388,7 @@ impl Writer {
             Message::ChapterChanged(result) => {
                 self.busy = false;
                 match result {
-                    Ok(project) => { self.project = Some(project); self.error = None; }
+                    Ok(project) => { self.project = Some(project); self.chapter_actions = None; self.error = None; }
                     Err(error) => self.error = Some(error),
                 }
             }
@@ -560,6 +576,7 @@ impl Writer {
             PendingAction::NewDraft => {
                 let project = self.project.take();
                 let show_tools = self.show_tools;
+                let tool_section = self.tool_section;
                 let reference = std::mem::take(&mut self.reference);
                 let show_reference = self.show_reference;
                 let activity = std::mem::take(&mut self.activity);
@@ -568,6 +585,7 @@ impl Writer {
                 *self = Self::default();
                 self.project = project;
                 self.show_tools = show_tools;
+                self.tool_section = tool_section;
                 self.reference = reference;
                 self.show_reference = show_reference;
                 self.activity = activity;
@@ -625,12 +643,6 @@ impl Writer {
             else if self.path.is_some() && self.saved_contents.is_some() { autosave = autosave.on_press(Message::EnableAutosave); }
         }
 
-        let filename = self
-            .path
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "Draft baru".to_owned());
-        let status = if self.dirty { " • belum disimpan" } else { "" };
         let words = self.word_count;
 
         let mut editor = text_editor(&self.content)
@@ -647,12 +659,6 @@ impl Writer {
         }
 
         let mut view = iced::widget::Column::new().spacing(12).height(Length::Fill);
-        if self.show_tools {
-            view = view.push(text("Writer").size(26))
-                .push(row![new_draft, open, save, save_as, preview, autosave].spacing(8).wrap())
-                .push(text("Ctrl+N: baru · Ctrl+O: buka · Ctrl+S: simpan · Ctrl+Shift+S: simpan sebagai").size(12))
-                .push(text(format!("{filename}{status}")));
-        }
 
         if let Some(action) = &self.pending_discard {
             let (question, confirm_label) = match action {
@@ -728,9 +734,6 @@ impl Writer {
                 button("Batal").on_press(Message::CancelAutosave),
             ].spacing(12));
         }
-        if self.show_tools && self.autosave_enabled() {
-            view = view.push(text("Auto-save aktif untuk file ini (setiap 30 detik); penyimpanan gagal akan menonaktifkannya.").size(12));
-        }
         if let Some(notice) = &self.activity_notice {
             view = view.push(text(notice).size(14));
             view = view.push(button("Tutup peringatan statistik").on_press(Message::DismissActivityNotice));
@@ -769,12 +772,9 @@ impl Writer {
                 .height(Length::Fill)
                 .into()
         } else {
-            editor.into()
+            let canvas = container(editor).width(Length::Fill).height(Length::Fill).max_width(900);
+            container(canvas).width(Length::Fill).height(Length::Fill).center_x(Length::Fill).into()
         };
-        if !self.show_tools {
-            let canvas = container(editing_area).width(Length::Fill).height(Length::Fill).max_width(900);
-            return view.push(container(canvas).width(Length::Fill).height(Length::Fill).center_x(Length::Fill)).into();
-        }
         let mut target_input = text_input("mis. 50000", &self.target_input).width(140);
         if !self.controls_blocked() {
             target_input = target_input.on_input(Message::TargetChanged);
@@ -785,18 +785,16 @@ impl Writer {
             create_project = create_project.on_press(Message::CreateProject);
             open_project = open_project.on_press(Message::OpenProject);
         }
-        let mut project_panel = column![
-            text("Chapter").size(18),
-            row![create_project, open_project].spacing(6).wrap(),
-        ].spacing(8).width(220).height(Length::Fill);
+        let mut project_panel = iced::widget::Column::new().spacing(8).width(Length::Fill);
+        project_panel = project_panel.push(row![create_project.style(crate::mockup_style::secondary), open_project.style(crate::mockup_style::secondary)].spacing(6).wrap());
         if let Some(project) = &self.project {
             project_panel = project_panel.push(text(project.folder().display().to_string()).size(12));
             let mut reference = button(if self.show_reference { "Kembali ke editor" } else { "Karakter & dunia" });
             if !self.controls_blocked() { reference = reference.on_press(Message::ToggleReference); }
-            project_panel = project_panel.push(reference);
+            project_panel = project_panel.push(reference.style(crate::mockup_style::navigation_menu));
             let mut activity = button(if self.show_activity { "Kembali ke editor" } else { "Target & streak" });
             if !self.controls_blocked() { activity = activity.on_press(Message::ToggleActivity); }
-            project_panel = project_panel.push(activity);
+            project_panel = project_panel.push(activity.style(crate::mockup_style::navigation_menu));
             if self.activity.is_dirty() { project_panel = project_panel.push(text("Target belum disimpan").size(12)); }
             if self.reference.is_dirty() { project_panel = project_panel.push(text("Catatan belum disimpan").size(12)); }
             let mut title = text_input("Judul chapter", &self.chapter_title).size(13);
@@ -807,10 +805,10 @@ impl Writer {
                 add = add.on_press(Message::AddChapter);
                 attach = attach.on_press(Message::AttachChapter);
             }
-            project_panel = project_panel.push(title).push(row![add, attach].spacing(4).wrap());
+            project_panel = project_panel.push(title).push(row![add.style(crate::mockup_style::secondary), attach.style(crate::mockup_style::secondary)].spacing(4).wrap());
             let mut tree_toggle = button(text(if self.chapter_tree_collapsed { "▸ Folder proyek" } else { "▾ Folder proyek" }).size(13)).width(Length::Fill);
             if !self.controls_blocked() { tree_toggle = tree_toggle.on_press(Message::ToggleChapterTree); }
-            project_panel = project_panel.push(tree_toggle);
+            project_panel = project_panel.push(tree_toggle.style(crate::mockup_style::navigation_menu));
             if let Some(index) = self.dragging_chapter {
                 project_panel = project_panel.push(text(format!("Menggeser chapter {}: lepaskan di chapter tujuan.", index + 1)).size(12));
                 project_panel = project_panel.push(button("Batal geser").on_press(Message::CancelChapterDrag));
@@ -820,7 +818,7 @@ impl Writer {
                 for (index, chapter) in project.chapters().iter().enumerate() {
                     let active = project.chapter_path(index).as_ref() == self.path.as_ref();
                     let label = format!("{:02}. {}{}", index + 1, chapter.title, if active { " (terbuka)" } else { "" });
-                    let mut open_chapter = button(text(label).size(13)).width(Length::Fill);
+                    let mut open_chapter = button(text(label).size(13)).width(Length::Fill).style(crate::mockup_style::navigation_menu);
                     if !self.controls_blocked() { open_chapter = open_chapter.on_press(Message::OpenChapter(index)); }
                     let mut handle = mouse_area(container(text("⋮⋮").size(16)).padding([8, 4])).interaction(iced::mouse::Interaction::Grab);
                     if !self.controls_blocked() { handle = handle.on_press(Message::StartChapterDrag(index)); }
@@ -834,34 +832,52 @@ impl Writer {
                         if index + 1 < project.chapters().len() { down = down.on_press(Message::MoveChapterDown(index)); }
                         remove = remove.on_press(Message::RemoveChapter(index));
                     }
-                    let entry = column![
-                        row![text("└").size(12), handle, open_chapter].spacing(3).align_y(iced::Alignment::Center),
-                        row![rename, up, down, remove].spacing(4).padding(iced::Padding { bottom: 4.0, ..iced::Padding::default() }).wrap(),
-                    ].spacing(3);
+                    let mut more = button(text("⋯").size(15)).style(crate::mockup_style::navigation_menu);
+                    if !self.controls_blocked() { more = more.on_press(Message::ToggleChapterActions(index)); }
+                    let mut entry = column![row![text("└").size(12), handle, open_chapter, more].spacing(3).align_y(iced::Alignment::Center)].spacing(3);
+                    if self.chapter_actions == Some(index) {
+                        entry = entry.push(row![rename.style(crate::mockup_style::secondary), up.style(crate::mockup_style::secondary), down.style(crate::mockup_style::secondary), remove.style(crate::mockup_style::secondary)].spacing(4).padding(iced::Padding { bottom: 4.0, ..iced::Padding::default() }).wrap());
+                    }
                     let mut drop_target = mouse_area(entry);
                     if self.dragging_chapter.is_some() { drop_target = drop_target.on_release(Message::DropChapter(index)); }
                     chapters = chapters.push(drop_target);
                 }
-                project_panel = project_panel.push(scrollable(chapters).height(Length::Fill));
+                project_panel = project_panel.push(chapters);
             }
         } else {
             project_panel = project_panel.push(text("Buat atau buka folder proyek untuk menyimpan chapter sebagai file Markdown.").size(12));
         }
-        view = view.push(row![project_panel, container(editing_area).width(Length::Fill).height(Length::Fill)].spacing(12).height(Length::Fill)).push(
-            row![text(format!("{words} kata")), text("Target draft:"), target_input]
-                .spacing(12),
-        );
-        if let Some(target) = word_target(&self.target_input) {
-            let progress = target_progress(words, target);
-            view = view.push(
-                row![
-                    progress_bar(0.0..=1.0, progress).width(Length::Fill),
-                    text(format!("{words} / {target} kata")),
-                ].spacing(12),
-            );
-        } else if !self.target_input.is_empty() {
-            view = view.push(text("Target harus berupa angka 1–1.000.000.000.").size(14));
+        let section_button = |label: &'static str, section: ToolSection| {
+            let arrow = if self.tool_section == Some(section) { "▾" } else { "▸" };
+            let button = button(text(format!("{arrow}  {label}")).size(13)).width(Length::Fill).style(crate::mockup_style::navigation_menu);
+            if !self.controls_blocked() { button.on_press(Message::ToggleToolSection(section)) } else { button }
+        };
+        let mut tools = column![section_button("File", ToolSection::File)].spacing(6).width(Length::Fill);
+        if self.tool_section == Some(ToolSection::File) {
+            tools = tools.push(column![
+                new_draft.style(crate::mockup_style::navigation_menu), open.style(crate::mockup_style::navigation_menu),
+                save.style(crate::mockup_style::navigation_menu), save_as.style(crate::mockup_style::navigation_menu),
+                preview.style(crate::mockup_style::navigation_menu), autosave.style(crate::mockup_style::navigation_menu),
+                text("Ctrl+N / O / S · Ctrl+Shift+S").size(11).color(crate::mockup_style::muted(theme)),
+            ].spacing(3));
         }
+        tools = tools.push(section_button("Proyek & chapter", ToolSection::Project));
+        if self.tool_section == Some(ToolSection::Project) { tools = tools.push(project_panel); }
+        tools = tools.push(section_button("Target draft", ToolSection::Target));
+        if self.tool_section == Some(ToolSection::Target) {
+            tools = tools.push(text(format!("{words} kata")).size(12)).push(target_input);
+            if let Some(target) = word_target(&self.target_input) {
+                tools = tools.push(progress_bar(0.0..=1.0, target_progress(words, target)).width(Length::Fill));
+                tools = tools.push(text(format!("{words} / {target} kata")).size(12));
+            } else if !self.target_input.is_empty() {
+                tools = tools.push(text("Target harus berupa angka 1–1.000.000.000.").size(12));
+            }
+        }
+        let panel: Element<'_, Message> = if self.show_tools { scrollable(tools).height(Length::Fill).into() } else { column![].into() };
+        view = view.push(row![
+            container(panel).width(if self.show_tools { 220_u16 } else { 0_u16 }).height(Length::Fill),
+            container(editing_area).width(Length::Fill).height(Length::Fill),
+        ].spacing(if self.show_tools { 16.0 } else { 0.0 }).height(Length::Fill));
         view.into()
     }
 }
@@ -1170,6 +1186,33 @@ mod tests {
         assert!(writer.pending_discard.is_some()); drop(writer.view(&Theme::Dark));
         let _ = writer.update(Message::CancelDiscard);
         assert!(writer.dirty); assert_eq!(writer.content.text(), contents);
+    }
+
+    #[test]
+    fn tool_groups_are_collapsed_and_do_not_change_draft_or_confirmation() {
+        use text_editor::{Action, Edit};
+        let mut writer = Writer::default();
+        assert_eq!(writer.tool_section, None);
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Insert('x'))));
+        let contents = writer.content.text();
+        let _ = writer.update(Message::ToggleToolSection(ToolSection::File));
+        assert_eq!(writer.tool_section, None); // Menu is closed.
+        let _ = writer.update(Message::ToggleTools);
+        let _ = writer.update(Message::ToggleToolSection(ToolSection::File));
+        assert_eq!(writer.tool_section, Some(ToolSection::File));
+        let _ = writer.update(Message::ToggleToolSection(ToolSection::Project));
+        assert_eq!(writer.tool_section, Some(ToolSection::Project));
+        let _ = writer.update(Message::ToggleChapterActions(0));
+        assert_eq!(writer.chapter_actions, None); // No project/chapter.
+        drop(writer.view(&Theme::Nord));
+        let _ = writer.update(Message::ToggleToolSection(ToolSection::Project));
+        assert_eq!(writer.tool_section, None);
+        let _ = writer.update(Message::NewDraft);
+        let _ = writer.update(Message::ToggleToolSection(ToolSection::File));
+        assert!(writer.pending_discard.is_some());
+        assert_eq!(writer.tool_section, None);
+        assert_eq!(writer.content.text(), contents);
+        drop(writer.view(&Theme::Dark));
     }
 
     #[test]

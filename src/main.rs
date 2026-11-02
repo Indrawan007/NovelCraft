@@ -581,8 +581,12 @@ impl NovelCraft {
             return container(column![bar, self.writer.zen_view(&theme).map(Message::Writer)].spacing(12))
                 .width(Length::Fill).height(Length::Fill).padding(32).into();
         }
-        let compact_writer = self.page == Page::Writer && !self.writer.tools_visible();
-        let sidebar_hidden = self.focus_mode || compact_writer;
+        let compact = match self.page {
+            Page::Writer => !self.writer.tools_visible(),
+            Page::Reader => !self.reader.tools_visible(),
+            _ => false,
+        };
+        let sidebar_hidden = self.focus_mode || compact;
         let mut navigation = Column::new().spacing(4);
         if !sidebar_hidden {
             navigation = navigation.push(text("NAVIGATE").size(10).color(mockup_style::subtle(&theme)));
@@ -604,14 +608,18 @@ impl NovelCraft {
                         .on_press(Message::Navigate(page)),
                 );
             }
-            let draft = self.writer.draft_stats_label();
-            navigation = navigation.push(vertical_space()).push(
-                container(column![
-                    text("DRAFT SAAT INI").size(10).color(mockup_style::subtle(&theme)),
-                    text(draft).size(18).color(theme.palette().primary),
-                    text("Target per draft · sesi ini").size(11).color(mockup_style::muted(&theme)),
-                ].spacing(5)).width(Length::Fill).padding(12).style(mockup_style::card),
-            );
+            if !matches!(self.page, Page::Reader | Page::Writer) {
+                let draft = self.writer.draft_stats_label();
+                navigation = navigation.push(vertical_space()).push(
+                    container(column![
+                        text("DRAFT SAAT INI").size(10).color(mockup_style::subtle(&theme)),
+                        text(draft).size(18).color(theme.palette().primary),
+                        text("Target per draft · sesi ini").size(11).color(mockup_style::muted(&theme)),
+                    ].spacing(5)).width(Length::Fill).padding(12).style(mockup_style::card),
+                );
+            } else {
+                navigation = navigation.push(vertical_space());
+            }
             navigation = navigation.push(text("v0.1.0 · lokal").size(10).color(mockup_style::subtle(&theme)));
         }
 
@@ -646,20 +654,23 @@ impl NovelCraft {
         let content = container(page)
             .width(Length::Fill)
             .height(Length::Fill)
-            .padding(if self.page == Page::Library { [40, 48] } else if compact_writer { [8, 16] } else { [24, 32] });
+            .padding(if self.page == Page::Library { [40, 48] } else if matches!(self.page, Page::Writer | Page::Reader) { [8, 16] } else { [24, 32] });
 
         let mut fullscreen = button(text("Fullscreen (F11)").size(12)).style(button::secondary);
         if !self.fullscreen_pending {
             fullscreen = fullscreen.on_press(Message::ToggleFullscreen);
         }
-        let mut writer_menu = button(text(if compact_writer { "☰  Menu" } else { "Tutup menu" }).size(12)).style(mockup_style::navigation_menu);
-        if self.writer.can_toggle_tools() { writer_menu = writer_menu.on_press(Message::Writer(writer::Message::ToggleTools)); }
-        let mut topbar_content = if compact_writer {
-            row![
-                writer_menu,
-                horizontal_space(),
-                text(self.writer.compact_status()).size(12).color(mockup_style::muted(&theme)),
-            ].align_y(iced::Alignment::Center).spacing(10)
+        let mut menu = button(text(if compact { "☰  Menu" } else { "Tutup menu" }).size(12)).style(mockup_style::navigation_menu);
+        let menu_action = match self.page {
+            Page::Writer if self.writer.can_toggle_tools() => Some(Message::Writer(writer::Message::ToggleTools)),
+            Page::Reader if self.reader.can_toggle_tools() => Some(Message::Reader(reader::Message::ToggleTools)),
+            _ => None,
+        };
+        if let Some(action) = menu_action { menu = menu.on_press(action); }
+        let mut topbar_content = if compact {
+            let status = if self.page == Page::Writer { self.writer.compact_status() } else { self.reader.compact_status() };
+            row![menu, horizontal_space(), text(status).size(12).color(mockup_style::muted(&theme))]
+                .align_y(iced::Alignment::Center).spacing(10)
         } else {
             let mut bar = row![
                 container(Space::new(6, 6)).style(|theme: &Theme| container::Style::default().background(theme.palette().primary).border(iced::Border { radius: 3.0.into(), ..iced::Border::default() })),
@@ -669,6 +680,11 @@ impl NovelCraft {
                 horizontal_space(),
                 fullscreen,
             ].align_y(iced::Alignment::Center).spacing(10);
+            if self.page == Page::Writer {
+                bar = bar.push(text(self.writer.compact_status()).size(12).color(mockup_style::muted(&theme)));
+            } else if self.page == Page::Reader {
+                bar = bar.push(text(self.reader.compact_status()).size(12).color(mockup_style::muted(&theme)));
+            }
             if matches!(self.page, Page::Reader | Page::Writer) {
                 let label = if self.focus_mode { "Keluar mode fokus" } else { "Mode fokus" };
                 bar = bar.push(button(text(label).size(12)).style(button::secondary).on_press(Message::ToggleFocusMode));
@@ -676,8 +692,9 @@ impl NovelCraft {
             if self.page == Page::Writer {
                 let mut zen = button(text("Mode Zen").size(12)).style(button::secondary);
                 if self.writer.can_enter_zen() && !self.fullscreen_pending { zen = zen.on_press(Message::EnterZen); }
-                bar = bar.push(zen).push(writer_menu);
+                bar = bar.push(zen);
             }
+            if matches!(self.page, Page::Writer | Page::Reader) { bar = bar.push(menu); }
             bar
         };
         if let Some(notice) = &self.fullscreen_notice {
@@ -686,7 +703,7 @@ impl NovelCraft {
         let topbar = container(topbar_content)
             .width(Length::Fill)
             .padding([0, 20])
-            .center_y(if compact_writer { 40 } else { 48 })
+            .center_y(if compact { 40 } else { 48 })
             .style(mockup_style::chrome);
 
         column![topbar, row![sidebar, content].height(Length::Fill)]

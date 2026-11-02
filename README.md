@@ -49,8 +49,11 @@ besar); file TXT ditampilkan sebagai teks biasa. Warna editor menggunakan tema
 highlighter gelap bawaan Iced yang berbeda dari palet tema aplikasi. Preview memakai isi editor saat ini dan
 tidak menyimpan file atau membuka tautan secara otomatis. Secara default Writer
 menampilkan kanvas editor, dengan tombol **Menu** dan status draft di atas. Buka
-**Menu** untuk navigasi, penyimpanan, proyek, chapter, target, preview, mode fokus,
-dan Zen; **Tutup menu** kembali ke tampilan sederhana. Shortcut tetap tersedia.
+**Menu** untuk navigasi, mode fokus, dan Zen. Peralatan Writer berada di panel
+samping yang dikelompokkan menjadi **File**, **Proyek & chapter**, dan **Target
+draft**; buka satu kelompok sesuai kebutuhan. Dalam daftar chapter, tombol **⋯**
+menampilkan pilihan judul, urutan, dan hapus untuk chapter tersebut. **Tutup menu**
+kembali ke tampilan sederhana. Shortcut tetap tersedia.
 Menu tidak dapat ditutup saat ada edit catatan/target harian yang belum disimpan;
 simpan atau batalkan dulu. Konfirmasi penyimpanan dan peringatan tetap muncul dalam
 tampilan sederhana. Tombol **Mode fokus** di menu Writer menyembunyikan sidebar; tekan **Keluar mode fokus** untuk
@@ -66,13 +69,20 @@ agar tidak dilakukan pada setiap ketikan; label menunjukkan saat preview sedang
 menunggu pembaruan. Parsing tetap menelusuri seluruh draft di thread UI, sehingga
 draft besar masih dapat terasa lambat. Ini bukan target harian; mengubah target
 tidak mengubah atau menyimpan isi file. Kosongkan kolom untuk menyembunyikan target.
-Tombol **Fullscreen (F11)** terpisah dari mode fokus dan tersedia di semua halaman;
+Tombol **Fullscreen (F11)** terpisah dari mode fokus dan tersedia di semua halaman
+(melalui Menu di Writer dan Reader);
 tekan lagi untuk kembali ke mode berjendela. Fullscreen dapat digabungkan dengan
 mode fokus, dan tidak otomatis berakhir saat berpindah halaman atau disimpan
 antar-sesi. Permintaan fullscreen bergantung pada dukungan compositor/window
 manager; tombol membaca mode jendela saat ditekan, tetapi perubahan eksternal atau
 kompositor dapat memengaruhi hasilnya. Mengubah ukuran tampilan dapat menggeser
 teks Reader dan membatalkan pengukuran gulir sebelumnya.
+Reader juga dimulai dengan tampilan baca sederhana. **Menu** membuka navigasi dan
+panel samping dengan kelompok **File & penanda**, **Tampilan**, **Daftar isi &
+bagian** (EPUB), dan **Cari**. Kontrol tidak ditumpuk di atas teks; buka satu
+kelompok yang dibutuhkan lalu gunakan **Tutup menu** untuk kembali membaca.
+Membuka atau menutup menu mencoba memulihkan posisi gulir yang sudah terukur secara
+perkiraan; jika posisi belum terukur, posisinya mungkin bergeser.
 Reader dapat membuka file EPUB, TXT/Markdown UTF-8, menggulir teks, dan mengatur
 ukuran font (12–32). Tombol A+/A− menyimpan ukuran secara lokal dan menerapkannya
 setelah penyimpanan berhasil; ukuran dipulihkan saat aplikasi dibuka ulang.
@@ -392,7 +402,7 @@ Daftar di bawah ini adalah **target MVP**, bukan fitur yang sudah selesai.
 ### ✍️ Mode Tulis (Writer)
 - [x] Proyek chapter dasar: buat/buka folder, tambah, buka, ubah judul, susun ulang dan hapus entri chapter Markdown
 - [x] Draft baru dengan konfirmasi untuk perubahan yang belum disimpan
-- [x] Preview Markdown dasar di samping editor
+- [x] Preview Markdown dasar di samping editor (Menu → File)
 - [x] Mode fokus Writer (sembunyikan sidebar; tanpa fullscreen)
 - [x] Text editor dengan syntax highlighting Markdown dasar
 - [x] Word counter real-time dan target jumlah kata sementara per draft

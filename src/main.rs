@@ -581,8 +581,10 @@ impl NovelCraft {
             return container(column![bar, self.writer.zen_view(&theme).map(Message::Writer)].spacing(12))
                 .width(Length::Fill).height(Length::Fill).padding(32).into();
         }
+        let compact_writer = self.page == Page::Writer && !self.writer.tools_visible();
+        let sidebar_hidden = self.focus_mode || compact_writer;
         let mut navigation = Column::new().spacing(4);
-        if !self.focus_mode {
+        if !sidebar_hidden {
             navigation = navigation.push(text("NAVIGATE").size(10).color(mockup_style::subtle(&theme)));
             for page in Page::ALL {
                 if page == Page::Settings {
@@ -615,9 +617,9 @@ impl NovelCraft {
 
         // Preserve the sidebar's place in the widget tree for editor state.
         let sidebar = container(navigation)
-            .width(if self.focus_mode { 0_u16 } else { 200_u16 })
+            .width(if sidebar_hidden { 0_u16 } else { 200_u16 })
             .height(Length::Fill)
-            .padding(if self.focus_mode { iced::Padding::default() } else { iced::Padding { top: 24.0, right: 10.0, bottom: 24.0, left: 10.0 } })
+            .padding(if sidebar_hidden { iced::Padding::default() } else { iced::Padding { top: 24.0, right: 10.0, bottom: 24.0, left: 10.0 } })
             .style(mockup_style::chrome);
 
         let page: Element<'_, Message> = if self.page == Page::Library {
@@ -644,36 +646,47 @@ impl NovelCraft {
         let content = container(page)
             .width(Length::Fill)
             .height(Length::Fill)
-            .padding(if self.page == Page::Library { [40, 48] } else { [24, 32] });
+            .padding(if self.page == Page::Library { [40, 48] } else if compact_writer { [8, 16] } else { [24, 32] });
 
         let mut fullscreen = button(text("Fullscreen (F11)").size(12)).style(button::secondary);
         if !self.fullscreen_pending {
             fullscreen = fullscreen.on_press(Message::ToggleFullscreen);
         }
-        let mut topbar_content = row![
-            container(Space::new(6, 6)).style(|theme: &Theme| container::Style::default().background(theme.palette().primary).border(iced::Border { radius: 3.0.into(), ..iced::Border::default() })),
-            text("novelcraft").size(14).font(iced::Font::MONOSPACE),
-            container(Space::new(1, 16)).style(|theme: &Theme| container::Style::default().background(theme.palette().text.scale_alpha(0.10))),
-            text(format!("~ / {}", self.page.title().to_lowercase())).size(12).color(mockup_style::muted(&theme)),
-            horizontal_space(),
-            fullscreen,
-        ].align_y(iced::Alignment::Center).spacing(10);
-        if matches!(self.page, Page::Reader | Page::Writer) {
-            let label = if self.focus_mode { "Keluar mode fokus" } else { "Mode fokus" };
-            topbar_content = topbar_content.push(button(text(label).size(12)).style(button::secondary).on_press(Message::ToggleFocusMode));
-        }
-        if self.page == Page::Writer {
-            let mut zen = button(text("Mode Zen").size(12)).style(button::secondary);
-            if self.writer.can_enter_zen() && !self.fullscreen_pending { zen = zen.on_press(Message::EnterZen); }
-            topbar_content = topbar_content.push(zen);
-        }
+        let mut writer_menu = button(text(if compact_writer { "☰  Menu" } else { "Tutup menu" }).size(12)).style(mockup_style::navigation_menu);
+        if self.writer.can_toggle_tools() { writer_menu = writer_menu.on_press(Message::Writer(writer::Message::ToggleTools)); }
+        let mut topbar_content = if compact_writer {
+            row![
+                writer_menu,
+                horizontal_space(),
+                text(self.writer.compact_status()).size(12).color(mockup_style::muted(&theme)),
+            ].align_y(iced::Alignment::Center).spacing(10)
+        } else {
+            let mut bar = row![
+                container(Space::new(6, 6)).style(|theme: &Theme| container::Style::default().background(theme.palette().primary).border(iced::Border { radius: 3.0.into(), ..iced::Border::default() })),
+                text("novelcraft").size(14).font(iced::Font::MONOSPACE),
+                container(Space::new(1, 16)).style(|theme: &Theme| container::Style::default().background(theme.palette().text.scale_alpha(0.10))),
+                text(format!("~ / {}", self.page.title().to_lowercase())).size(12).color(mockup_style::muted(&theme)),
+                horizontal_space(),
+                fullscreen,
+            ].align_y(iced::Alignment::Center).spacing(10);
+            if matches!(self.page, Page::Reader | Page::Writer) {
+                let label = if self.focus_mode { "Keluar mode fokus" } else { "Mode fokus" };
+                bar = bar.push(button(text(label).size(12)).style(button::secondary).on_press(Message::ToggleFocusMode));
+            }
+            if self.page == Page::Writer {
+                let mut zen = button(text("Mode Zen").size(12)).style(button::secondary);
+                if self.writer.can_enter_zen() && !self.fullscreen_pending { zen = zen.on_press(Message::EnterZen); }
+                bar = bar.push(zen).push(writer_menu);
+            }
+            bar
+        };
         if let Some(notice) = &self.fullscreen_notice {
             topbar_content = topbar_content.push(text(notice).size(12));
         }
         let topbar = container(topbar_content)
             .width(Length::Fill)
             .padding([0, 20])
-            .center_y(48)
+            .center_y(if compact_writer { 40 } else { 48 })
             .style(mockup_style::chrome);
 
         column![topbar, row![sidebar, content].height(Length::Fill)]
@@ -798,6 +811,24 @@ mod tests {
         assert!(!app.fullscreen_pending);
         assert!(app.writer.has_unsaved_changes());
         assert!(app.focus_mode);
+    }
+
+    #[test]
+    fn compact_writer_menu_retains_draft_and_keeps_navigation_accessible() {
+        let mut app = NovelCraft::default();
+        let _ = app.update(Message::Navigate(Page::Writer));
+        assert!(!app.writer.tools_visible());
+        make_draft_dirty(&mut app); drop(app.view());
+        let _ = app.update(Message::Writer(writer::Message::ToggleTools));
+        assert!(app.writer.tools_visible()); assert!(app.writer.has_unsaved_changes()); drop(app.view());
+        let _ = app.update(Message::Writer(writer::Message::ToggleTools));
+        assert!(!app.writer.tools_visible()); assert!(app.writer.has_unsaved_changes());
+        let _ = app.update(Message::Shortcut(shortcuts::Shortcut::Library));
+        assert_eq!(app.page, Page::Library); assert!(app.writer.has_unsaved_changes());
+        let _ = app.update(Message::Shortcut(shortcuts::Shortcut::Writer));
+        assert!(!app.writer.tools_visible());
+        let id = window::Id::unique(); let _ = app.update(Message::CloseRequested(id));
+        assert_eq!(app.pending_close, Some(id));
     }
 
     #[test]

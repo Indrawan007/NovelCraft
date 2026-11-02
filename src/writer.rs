@@ -12,6 +12,7 @@ pub struct Writer {
     saved_contents: Option<String>,
     target_input: String,
     project: Option<crate::project::Project>,
+    show_tools: bool,
     chapter_title: String,
     chapter_tree_collapsed: bool,
     dragging_chapter: Option<usize>,
@@ -61,6 +62,7 @@ pub enum Message {
     Edit(text_editor::Action),
     TargetChanged(String),
     Shortcut(crate::shortcuts::Shortcut),
+    ToggleTools,
     TogglePreview,
     PreviewRefresh(u64),
     PreviewLink(markdown::Url),
@@ -122,6 +124,17 @@ impl Writer {
         self.busy || self.reference.is_busy() || self.activity.is_busy() || self.activity_pending
     }
 
+    pub(crate) fn tools_visible(&self) -> bool { self.show_tools }
+    pub(crate) fn can_toggle_tools(&self) -> bool { !self.controls_blocked() }
+
+    pub(crate) fn compact_status(&self) -> String {
+        let name = self.path.as_ref().and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| "Draft baru".into());
+        let mut status = format!("{name}{}", if self.dirty { " · belum disimpan" } else { "" });
+        if self.autosave_enabled() { status.push_str(" · auto-save aktif"); }
+        status
+    }
+
     pub(crate) fn autosave_enabled(&self) -> bool {
         self.autosave_path.is_some()
     }
@@ -151,6 +164,13 @@ impl Writer {
             }
             Message::TargetChanged(value) if !self.controls_blocked() => {
                 self.target_input = value;
+            }
+            Message::ToggleTools if !self.controls_blocked() => {
+                if self.show_tools && (self.reference.is_dirty() || self.activity.is_dirty()) {
+                    self.error = Some("Simpan atau batalkan perubahan catatan dan target sebelum menutup menu.".into());
+                } else {
+                    self.show_tools = !self.show_tools;
+                }
             }
             Message::TogglePreview if !self.controls_blocked() => {
                 self.show_preview = !self.show_preview;
@@ -536,6 +556,7 @@ impl Writer {
         match action {
             PendingAction::NewDraft => {
                 let project = self.project.take();
+                let show_tools = self.show_tools;
                 let reference = std::mem::take(&mut self.reference);
                 let show_reference = self.show_reference;
                 let activity = std::mem::take(&mut self.activity);
@@ -543,6 +564,7 @@ impl Writer {
                 let activity_notice = self.activity_notice.take();
                 *self = Self::default();
                 self.project = project;
+                self.show_tools = show_tools;
                 self.reference = reference;
                 self.show_reference = show_reference;
                 self.activity = activity;
@@ -610,20 +632,24 @@ impl Writer {
 
         let mut editor = text_editor(&self.content)
             .height(Length::Fill)
+            .size(18)
+            .line_height(iced::widget::text::LineHeight::Relative(1.6))
+            .padding([24, 30])
+            .placeholder("Mulai menulis…")
+            .style(crate::mockup_style::writer_editor)
             .highlight(self.syntax_token(), highlighter::Theme::Base16Ocean)
             .key_binding(editor_key_binding);
         if !self.controls_blocked() {
             editor = editor.on_action(Message::Edit);
         }
 
-        let mut view = column![
-            text("Writer").size(32),
-            row![new_draft, open, save, save_as, preview, autosave].spacing(12).wrap(),
-            text("Ctrl+N: baru · Ctrl+O: buka · Ctrl+S: simpan · Ctrl+Shift+S: simpan sebagai").size(12),
-            text(format!("{filename}{status}")),
-        ]
-        .spacing(12)
-        .height(Length::Fill);
+        let mut view = iced::widget::Column::new().spacing(12).height(Length::Fill);
+        if self.show_tools {
+            view = view.push(text("Writer").size(26))
+                .push(row![new_draft, open, save, save_as, preview, autosave].spacing(8).wrap())
+                .push(text("Ctrl+N: baru · Ctrl+O: buka · Ctrl+S: simpan · Ctrl+Shift+S: simpan sebagai").size(12))
+                .push(text(format!("{filename}{status}")));
+        }
 
         if let Some(action) = &self.pending_discard {
             let (question, confirm_label) = match action {
@@ -699,7 +725,7 @@ impl Writer {
                 button("Batal").on_press(Message::CancelAutosave),
             ].spacing(12));
         }
-        if self.autosave_enabled() {
+        if self.show_tools && self.autosave_enabled() {
             view = view.push(text("Auto-save aktif untuk file ini (setiap 30 detik); penyimpanan gagal akan menonaktifkannya.").size(12));
         }
         if let Some(notice) = &self.activity_notice {
@@ -716,11 +742,11 @@ impl Writer {
             view = view.push(text(notice).size(14));
         }
 
-        let editing_area: Element<'_, Message> = if self.show_reference {
+        let editing_area: Element<'_, Message> = if self.show_tools && self.show_reference {
             self.reference.view().map(Message::Reference)
-        } else if self.show_activity {
+        } else if self.show_tools && self.show_activity {
             self.activity.view().map(Message::Activity)
-        } else if self.show_preview {
+        } else if self.show_tools && self.show_preview {
             let preview_content = markdown::view(
                 &self.preview_items,
                 markdown::Settings::with_text_size(16),
@@ -742,6 +768,10 @@ impl Writer {
         } else {
             editor.into()
         };
+        if !self.show_tools {
+            let canvas = container(editing_area).width(Length::Fill).height(Length::Fill).max_width(900);
+            return view.push(container(canvas).width(Length::Fill).height(Length::Fill).center_x(Length::Fill)).into();
+        }
         let mut target_input = text_input("mis. 50000", &self.target_input).width(140);
         if !self.controls_blocked() {
             target_input = target_input.on_input(Message::TargetChanged);
@@ -1113,6 +1143,56 @@ async fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_writer_keeps_draft_shortcuts_and_confirmations() {
+        use text_editor::{Action, Edit};
+        let mut writer = Writer::default();
+        assert!(!writer.tools_visible());
+        assert_eq!(writer.compact_status(), "Draft baru");
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Insert('x'))));
+        let contents = writer.content.text();
+        assert!(writer.compact_status().contains("belum disimpan"));
+        drop(writer.view(&Theme::Nord));
+        let _ = writer.update(Message::ToggleTools);
+        assert!(writer.tools_visible()); assert_eq!(writer.content.text(), contents);
+        let _ = writer.update(Message::ToggleTools);
+        assert!(!writer.tools_visible()); assert_eq!(writer.content.text(), contents);
+        let _ = writer.update(Message::Save);
+        assert!(writer.pending_format_save.is_some()); drop(writer.view(&Theme::Dark));
+        let _ = writer.update(Message::ToggleTools);
+        assert!(!writer.tools_visible()); // Confirmation stays visible until answered.
+        let _ = writer.update(Message::CancelFormatSave);
+        let _ = writer.update(Message::NewDraft);
+        assert!(writer.pending_discard.is_some()); drop(writer.view(&Theme::Dark));
+        let _ = writer.update(Message::CancelDiscard);
+        assert!(writer.dirty); assert_eq!(writer.content.text(), contents);
+    }
+
+    #[test]
+    fn closing_tools_never_hides_unsaved_reference_edits() {
+        let mut writer = Writer::default();
+        let _ = writer.update(Message::ToggleTools);
+        let _ = writer.update(Message::Reference(crate::reference::Message::Loaded(Ok(vec![]))));
+        let _ = writer.update(Message::Reference(crate::reference::Message::New(crate::reference::Kind::Character)));
+        let _ = writer.update(Message::Reference(crate::reference::Message::Name("Tokoh".into())));
+        assert!(writer.reference.is_dirty());
+        let _ = writer.update(Message::ToggleTools);
+        assert!(writer.tools_visible()); assert!(writer.error.is_some());
+        let _ = writer.update(Message::Reference(crate::reference::Message::CancelEdit));
+        let _ = writer.update(Message::ToggleTools);
+        assert!(!writer.tools_visible());
+    }
+
+    #[test]
+    fn new_draft_keeps_tools_preference_and_compact_status() {
+        let mut writer = Writer::default(); let _ = writer.update(Message::ToggleTools);
+        let _ = writer.update(Message::NewDraft);
+        assert!(writer.tools_visible()); assert_eq!(writer.compact_status(), "Draft baru");
+        writer.path = Some(PathBuf::from("/folder/draft.md")); writer.dirty = true;
+        writer.autosave_path = writer.path.clone();
+        assert_eq!(writer.compact_status(), "draft.md · belum disimpan · auto-save aktif");
+    }
 
     #[tokio::test]
     async fn drag_reorders_index_only_and_preserves_open_dirty_draft() {

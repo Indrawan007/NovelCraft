@@ -47,8 +47,13 @@ dasar, preview Markdown langsung, serta buka dan simpan file TXT/Markdown.
 Highlighting aktif untuk draft baru dan file `.md`/`.markdown` (termasuk huruf
 besar); file TXT ditampilkan sebagai teks biasa. Warna editor menggunakan tema
 highlighter gelap bawaan Iced yang berbeda dari palet tema aplikasi. Preview memakai isi editor saat ini dan
-tidak menyimpan file atau membuka tautan secara otomatis. Tombol **Mode fokus**
-di Writer menyembunyikan sidebar; tekan **Keluar mode fokus** untuk
+tidak menyimpan file atau membuka tautan secara otomatis. Secara default Writer
+menampilkan kanvas editor, dengan tombol **Menu** dan status draft di atas. Buka
+**Menu** untuk navigasi, penyimpanan, proyek, chapter, target, preview, mode fokus,
+dan Zen; **Tutup menu** kembali ke tampilan sederhana. Shortcut tetap tersedia.
+Menu tidak dapat ditutup saat ada edit catatan/target harian yang belum disimpan;
+simpan atau batalkan dulu. Konfirmasi penyimpanan dan peringatan tetap muncul dalam
+tampilan sederhana. Tombol **Mode fokus** di menu Writer menyembunyikan sidebar; tekan **Keluar mode fokus** untuk
 menampilkannya kembali. Mode fokus tidak mengaktifkan fullscreen dan otomatis
 berakhir saat berpindah halaman. Shortcut navigasi tetap tersedia. Writer juga
 menyediakan target jumlah kata per draft dan progress bar; target hanya berlaku

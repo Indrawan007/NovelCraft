@@ -1,5 +1,5 @@
 //! Visual tokens adapted from mockup.html. Other saved themes keep their palettes.
-use iced::widget::{button, container, text_input};
+use iced::widget::{button, container, text_editor, text_input};
 use iced::{Border, Color, Theme};
 use std::sync::OnceLock;
 
@@ -64,6 +64,10 @@ pub fn navigation(theme: &Theme, status: button::Status, selected: bool) -> butt
     }
 }
 
+pub fn navigation_menu(theme: &Theme, status: button::Status) -> button::Style {
+    navigation(theme, status, false)
+}
+
 pub fn search(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let palette = theme.palette();
     let disabled = status == text_input::Status::Disabled;
@@ -80,6 +84,14 @@ pub fn search(theme: &Theme, status: text_input::Status) -> text_input::Style {
         value: if disabled { muted(theme) } else { palette.text },
         selection: palette.primary.scale_alpha(0.3),
     }
+}
+
+// A quiet writing surface: no bright outline when focused or hovered.
+pub fn writer_editor(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
+    let mut style = text_editor::default(theme, status);
+    style.background = theme.palette().background.into();
+    style.border = Border::default();
+    style
 }
 
 pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
@@ -121,6 +133,17 @@ mod tests {
         assert!(normal.border.color.a < 0.1);
         assert_eq!(focused.border.color, theme.palette().primary);
         assert_eq!(normal.border.radius, 6.0.into());
+    }
+
+    #[test]
+    fn writer_editor_has_no_bright_border_in_any_state() {
+        for theme in [mockup_theme(), Theme::Nord, Theme::Dark, Theme::Dracula] {
+            for status in [text_editor::Status::Active, text_editor::Status::Hovered, text_editor::Status::Focused, text_editor::Status::Disabled] {
+                let style = writer_editor(&theme, status);
+                assert_eq!(style.border.width, 0.0);
+                assert_eq!(style.background, Background::Color(theme.palette().background));
+            }
+        }
     }
 
     #[test]

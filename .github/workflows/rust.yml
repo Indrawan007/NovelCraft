@@ -26,4 +26,16 @@ jobs:
       - name: Check all targets
         run: cargo check --all-targets
       - name: Run tests
-        run: cargo test --all-targets
+        run: |
+          set +e
+          cargo test --all-targets > "$RUNNER_TEMP/novelcraft-tests.log" 2>&1
+          status=$?
+          cat "$RUNNER_TEMP/novelcraft-tests.log"
+          if [ "$status" -ne 0 ]; then
+            diagnostic=$(tail -n 100 "$RUNNER_TEMP/novelcraft-tests.log")
+            diagnostic=${diagnostic//'%'/'%25'}
+            diagnostic=${diagnostic//$'\r'/'%0D'}
+            diagnostic=${diagnostic//$'\n'/'%0A'}
+            printf '::error title=Rust tests failed::%s\n' "$diagnostic"
+          fi
+          exit "$status"

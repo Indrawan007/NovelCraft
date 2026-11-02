@@ -11,7 +11,7 @@ mod shortcuts;
 mod mockup_style;
 mod writer;
 
-use iced::widget::{button, column, container, horizontal_space, pick_list, row, scrollable, stack, text, vertical_space, Column, Space};
+use iced::widget::{button, column, container, horizontal_space, pick_list, row, scrollable, text, vertical_space, Column, Space};
 use iced::{event, keyboard, window, Element, Length, Subscription, Task, Theme};
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -700,13 +700,38 @@ impl NovelCraft {
                 navigation = navigation.push(text("v0.1.0 · lokal").size(10).color(mockup_style::subtle(&theme)));
             }
         }
-        let sidebar_content: Element<'_, Message> = if is_workspace && !sidebar_hidden {
+        let sidebar_content: Element<'_, Message> = if is_workspace && compact {
+            let mut menu = button(text("Menu").size(12))
+                .width(Length::Fill)
+                .padding([9, 4])
+                .style(mockup_style::secondary);
+            let action = match self.page {
+                Page::Writer if self.writer.can_toggle_tools() => Some(Message::Writer(writer::Message::ToggleTools)),
+                Page::Reader if self.reader.can_toggle_tools() => Some(Message::Reader(reader::Message::ToggleTools)),
+                _ => None,
+            };
+            if let Some(action) = action { menu = menu.on_press(action); }
+            column![menu].width(Length::Fill).into()
+        } else if is_workspace && !sidebar_hidden {
             scrollable(navigation).height(Length::Fill).into()
-        } else { navigation.into() };
+        } else {
+            navigation.into()
+        };
+        let sidebar_width = if is_workspace && compact { 64_u16 }
+            else if sidebar_hidden { 0_u16 }
+            else if is_workspace { 280_u16 }
+            else { 200_u16 };
+        let sidebar_padding = if is_workspace && compact {
+            iced::Padding { top: 12.0, right: 8.0, bottom: 12.0, left: 8.0 }
+        } else if sidebar_hidden {
+            iced::Padding::default()
+        } else {
+            iced::Padding { top: 20.0, right: 14.0, bottom: 20.0, left: 14.0 }
+        };
         let sidebar = container(sidebar_content)
-            .width(if sidebar_hidden { 0_u16 } else if is_workspace { 280_u16 } else { 200_u16 })
+            .width(sidebar_width)
             .height(Length::Fill)
-            .padding(if sidebar_hidden { iced::Padding::default() } else { iced::Padding { top: 20.0, right: 14.0, bottom: 20.0, left: 14.0 } })
+            .padding(sidebar_padding)
             .style(mockup_style::chrome);
         let page: Element<'_, Message> = match self.page {
             Page::Library => self.library.view(&theme).map(Message::Library),
@@ -731,18 +756,9 @@ impl NovelCraft {
         } else {
             container(bar).width(Length::Fill).padding([0, 20]).center_y(48).style(mockup_style::chrome).into()
         };
-        let base = column![topbar, row![sidebar, content].height(Length::Fill)].height(Length::Fill);
-        let mut trigger = button(text("Menu").size(12)).width(76).height(36).style(mockup_style::menu_trigger);
-        let action = match self.page {
-            Page::Writer if compact && self.writer.can_toggle_tools() => Some(Message::Writer(writer::Message::ToggleTools)),
-            Page::Reader if compact && self.reader.can_toggle_tools() => Some(Message::Reader(reader::Message::ToggleTools)),
-            _ => None,
-        };
-        let overlay: Element<'_, Message> = if let Some(action) = action {
-            trigger = trigger.on_press(action);
-            container(trigger).padding([4, 4]).into()
-        } else { Space::new(0, 0).into() };
-        stack![base, overlay].width(Length::Fill).height(Length::Fill).into()
+        column![topbar, row![sidebar, content].height(Length::Fill)]
+            .height(Length::Fill)
+            .into()
     }
 }
 

@@ -68,15 +68,6 @@ pub fn navigation_menu(theme: &Theme, status: button::Status) -> button::Style {
     navigation(theme, status, false)
 }
 
-// The hot corner leaves the writing surface empty until hovered.
-pub fn menu_trigger(theme: &Theme, status: button::Status) -> button::Style {
-    if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-        navigation(theme, status, false)
-    } else {
-        button::Style { text_color: Color::TRANSPARENT, ..button::Style::default() }
-    }
-}
-
 pub fn theme_select(theme: &Theme, status: pick_list::Status) -> pick_list::Style {
     let mut style = pick_list::default(theme, status);
     style.background = surface(theme).into();
@@ -144,17 +135,6 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
 mod tests {
     use super::*;
     use iced::Background;
-
-    #[test]
-    fn menu_hot_corner_is_invisible_until_hovered() {
-        for theme in [mockup_theme(), Theme::Nord, Theme::Dark] {
-            let idle = menu_trigger(&theme, button::Status::Active);
-            let hovered = menu_trigger(&theme, button::Status::Hovered);
-            assert_eq!(idle.text_color, Color::TRANSPARENT);
-            assert!(idle.background.is_none());
-            assert!(hovered.text_color.a > 0.0);
-        }
-    }
 
     #[test]
     fn mockup_search_uses_subtle_border_and_visible_focus() {

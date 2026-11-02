@@ -138,7 +138,14 @@ gunakan backup bila format baris penting.
 Library menyimpan lokasi file di `$XDG_DATA_HOME/novelcraft/library.json`, atau
 `~/.local/share/novelcraft/library.json` jika `XDG_DATA_HOME` tidak ditetapkan
 sebagai path absolut. File asli tidak dipindahkan atau dihapus. Jika file asli
-pindah atau terhapus, entri perlu dihapus dan ditambahkan ulang. Library menolak
+pindah, gunakan **Ubah lokasi** pada kartu untuk memilih file baru lalu
+konfirmasikan perubahan. Hanya daftar lokasi yang berubah; file tidak dipindahkan,
+dihapus, atau dibandingkan isinya. Penanda path lama tidak dipindahkan; jika path
+baru sudah memiliki penanda tersimpan, penanda itu tetap dipakai. Lokasi baru harus
+berupa file biasa dengan ekstensi yang didukung dan tidak boleh sama persis dengan
+entri lain; alias path yang berbeda tidak dideteksi sebagai duplikat. Lokasi diperiksa
+kembali sebelum menyimpan, tetapi tidak dikunci dan bisa berubah sesudahnya. Jika file
+terhapus, hapus entrinya atau pilih lokasi lain. Library menolak
 menimpa daftar yang berubah sejak dimuat; gunakan **Muat ulang Library** sebelum
 mencoba menambahkan atau menghapus entri lagi. File Library yang rusak, bukan
 file biasa, atau berupa symbolic link ditolak tanpa diganti. Pada Linux, daftar

@@ -314,6 +314,9 @@ impl NovelCraft {
     }
 
     fn open_library_book(&mut self, path: std::path::PathBuf, resume: bool) -> Task<Message> {
+        if !self.library.can_open_book() {
+            return Task::none();
+        }
         let task = if resume {
             self.reader.open_path_with_bookmark(path)
         } else {

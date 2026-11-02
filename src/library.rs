@@ -12,6 +12,7 @@ pub struct Library {
     loaded: bool,
     snapshot: Option<Vec<u8>>,
     busy: bool,
+    pending_relink: Option<(PathBuf, PathBuf)>,
     error: Option<String>,
     bookmarks: Option<Vec<Bookmark>>,
     bookmark_error: Option<String>,
@@ -29,6 +30,10 @@ pub enum Message {
     Import,
     Imported(Result<Option<PathBuf>, String>),
     Remove(PathBuf),
+    Relink(PathBuf),
+    Relinked(PathBuf, Result<Option<PathBuf>, String>),
+    ConfirmRelink,
+    CancelRelink,
     Saved(Result<(Vec<PathBuf>, Vec<u8>), String>),
     Open(PathBuf),
     Continue(PathBuf),
@@ -39,6 +44,14 @@ impl Library {
         self.busy
     }
 
+    fn controls_blocked(&self) -> bool {
+        self.busy || self.pending_relink.is_some()
+    }
+
+    pub(crate) fn can_open_book(&self) -> bool {
+        !self.controls_blocked()
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Load if !self.busy && !self.loaded => {
@@ -46,7 +59,7 @@ impl Library {
                 self.error = None;
                 return Task::perform(load(), Message::Loaded);
             }
-            Message::Reload if !self.busy && self.loaded => {
+            Message::Reload if !self.controls_blocked() && self.loaded => {
                 self.busy = true;
                 self.error = None;
                 return Task::perform(load(), Message::Loaded);
@@ -82,8 +95,8 @@ impl Library {
                     }
                 }
             }
-            Message::Search(query) => self.query = query,
-            Message::Import if self.loaded && !self.busy => {
+            Message::Search(query) if !self.controls_blocked() => self.query = query,
+            Message::Import if self.loaded && !self.controls_blocked() => {
                 self.busy = true;
                 self.error = None;
                 return Task::perform(pick_book(), Message::Imported);
@@ -103,9 +116,42 @@ impl Library {
                     Err(error) => self.error = Some(error),
                 }
             }
-            Message::Remove(path) if self.loaded && !self.busy => {
+            Message::Remove(path) if self.loaded && !self.controls_blocked() => {
                 let books = self.books.iter().filter(|book| *book != &path).cloned().collect();
                 return self.save(books);
+            }
+            Message::Relink(old) if self.loaded && !self.controls_blocked() && self.books.contains(&old) => {
+                self.busy = true;
+                self.error = None;
+                return Task::perform(pick_relink_target(), move |result| Message::Relinked(old.clone(), result));
+            }
+            Message::Relinked(old, result) => {
+                self.busy = false;
+                match result {
+                    Ok(Some(path)) => match replace_book(&self.books, &old, &path) {
+                        Ok(_) if self.loaded => self.pending_relink = Some((old, path)),
+                        Ok(_) => self.error = Some("Library belum dimuat.".into()),
+                        Err(error) => self.error = Some(error),
+                    },
+                    Ok(None) => {}
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            Message::CancelRelink if !self.busy => self.pending_relink = None,
+            Message::ConfirmRelink if self.loaded && !self.busy => {
+                if let Some((old, new)) = self.pending_relink.take() {
+                    match replace_book(&self.books, &old, &new) {
+                        Ok(books) => {
+                            self.busy = true;
+                            self.error = None;
+                            let snapshot = self.snapshot.clone();
+                            return Task::perform(async move {
+                                save_relinked_to(&library_path()?, books, snapshot, &new).await
+                            }, Message::Saved);
+                        }
+                        Err(error) => self.error = Some(error),
+                    }
+                }
             }
             Message::Saved(result) => {
                 self.busy = false;
@@ -136,17 +182,17 @@ impl Library {
     pub fn view(&self) -> Element<'_, Message> {
         let mut import = button("Tambah file");
         let mut reload = button("Muat ulang Library");
-        if self.loaded && !self.busy {
+        if self.loaded && !self.controls_blocked() {
             import = import.on_press(Message::Import);
             reload = reload.on_press(Message::Reload);
         }
+        let mut search = text_input("Cari nama file...", &self.query).width(Length::Fill);
+        if !self.controls_blocked() { search = search.on_input(Message::Search); }
         let mut view = column![
             text("Library").size(32),
             text("File tetap berada di lokasi aslinya; Library hanya menyimpan daftar lokasi.").size(14),
             row![
-                text_input("Cari nama file...", &self.query)
-                    .on_input(Message::Search)
-                    .width(Length::Fill),
+                search,
                 import,
                 reload,
             ].spacing(12),
@@ -154,6 +200,16 @@ impl Library {
         .spacing(12)
         .height(Length::Fill);
 
+        if let Some((old, new)) = &self.pending_relink {
+            view = view.push(text("Ubah lokasi entri Library ini? File tidak dipindahkan atau dihapus."));
+            view = view.push(text(format!("Lokasi lama: {}", old.display())).size(14));
+            view = view.push(text(format!("Lokasi baru: {}", new.display())).size(14));
+            view = view.push(text("Penanda lama tidak dipindahkan. Penanda yang sudah ada di lokasi baru tetap digunakan; isi file tidak dibandingkan.").size(14));
+            view = view.push(row![
+                button("Ubah lokasi").on_press(Message::ConfirmRelink),
+                button("Batal").on_press(Message::CancelRelink),
+            ].spacing(12));
+        }
         if self.busy {
             view = view.push(text("Memproses Library..."));
         }
@@ -183,9 +239,11 @@ impl Library {
             matches += 1;
             let mut open = button("Baca");
             let mut remove = button("Hapus dari daftar");
-            if self.loaded && !self.busy {
+            let mut relink = button("Ubah lokasi");
+            if self.loaded && !self.controls_blocked() {
                 open = open.on_press(Message::Open(path.clone()));
                 remove = remove.on_press(Message::Remove(path.clone()));
+                relink = relink.on_press(Message::Relink(path.clone()));
             }
             let mut card = column![
                 text(name.to_string()).size(18),
@@ -199,7 +257,7 @@ impl Library {
                 card = card.push(text(bookmark_label(path, bookmark)).size(14));
                 if let Some(bookmark) = bookmark {
                     let mut continue_reading = button("Lanjut baca");
-                    if self.loaded && !self.busy {
+                    if self.loaded && !self.controls_blocked() {
                         continue_reading = continue_reading.on_press(Message::Continue(path.clone()));
                     }
                     actions = actions.push(continue_reading);
@@ -210,7 +268,7 @@ impl Library {
                     card = card.push(text(estimate).size(14));
                 }
             }
-            card = card.push(actions.push(remove));
+            card = card.push(actions.push(remove)).push(relink);
             list = list.push(
                 container(card)
                     .width(Length::Fill)
@@ -315,6 +373,38 @@ async fn pick_book() -> Result<Option<PathBuf>, String> {
         return Err("Lokasi file harus berupa path absolut.".into());
     }
     Ok(Some(path))
+}
+
+fn replace_book(books: &[PathBuf], old: &Path, new: &Path) -> Result<Vec<PathBuf>, String> {
+    if old == new { return Err("Lokasi tidak berubah; Library tetap seperti semula.".into()); }
+    if books.iter().any(|path| path == new) { return Err("Lokasi baru sudah ada di Library.".into()); }
+    if books.iter().filter(|path| *path == old).count() != 1 {
+        return Err("Entri lama tidak ditemukan atau terduplikasi; periksa dan muat ulang Library.".into());
+    }
+    Ok(books.iter().map(|path| if path == old { new.to_owned() } else { path.clone() }).collect())
+}
+
+async fn pick_relink_target() -> Result<Option<PathBuf>, String> {
+    let target = pick_book().await?;
+    if let Some(path) = &target {
+        validate_relink_target(path).await?;
+    }
+    Ok(target)
+}
+
+async fn validate_relink_target(path: &Path) -> Result<(), String> {
+    let metadata = tokio::fs::metadata(path).await
+        .map_err(|error| format!("Lokasi baru tidak dapat diakses: {error}"))?;
+    if !metadata.is_file() {
+        return Err("Lokasi baru harus berupa file biasa.".into());
+    }
+    Ok(())
+}
+
+async fn save_relinked_to(path: &Path, books: Vec<PathBuf>, expected: Option<Vec<u8>>, target: &Path) -> Result<(Vec<PathBuf>, Vec<u8>), String> {
+    validate_relink_target(target).await?;
+    let snapshot = save_to(path, &books, expected).await?;
+    Ok((books, snapshot))
 }
 
 async fn save(books: Vec<PathBuf>, expected: Option<Vec<u8>>) -> Result<(Vec<PathBuf>, Vec<u8>), String> {
@@ -492,6 +582,116 @@ mod tests {
         assert_eq!(library.books.len(), 1);
         assert!(!library.busy);
         assert!(library.error.is_some());
+    }
+
+    #[test]
+    fn relink_requires_confirmation_and_cancellation_preserves_state() {
+        let old = PathBuf::from("/books/old.epub");
+        let new = PathBuf::from("/books/new.epub");
+        let bookmark = Bookmark { path: old.clone(), section: 1, section_count: Some(2), scroll_percent: Some(40), markdown_source: false };
+        let mut library = Library { books: vec![old.clone()], loaded: true, snapshot: Some(b"original".to_vec()),
+            bookmarks: Some(vec![bookmark.clone()]), busy: true, ..Library::default() };
+        let _ = library.update(Message::Relinked(old.clone(), Ok(Some(new.clone()))));
+        assert_eq!(library.pending_relink, Some((old.clone(), new.clone())));
+        assert!(!library.busy);
+        assert!(!library.can_open_book());
+        drop(library.view());
+        let _ = library.update(Message::Remove(old.clone()));
+        let _ = library.update(Message::Reload);
+        let _ = library.update(Message::Import);
+        let _ = library.update(Message::Search("ignored".into()));
+        assert!(!library.busy);
+        assert!(library.query.is_empty());
+        assert_eq!(library.books, vec![old.clone()]);
+        let _ = library.update(Message::CancelRelink);
+        assert!(library.can_open_book());
+        assert!(library.pending_relink.is_none());
+        assert_eq!(library.books, vec![old.clone()]);
+        assert_eq!(library.snapshot.as_deref(), Some(b"original".as_slice()));
+        assert_eq!(library.bookmarks.as_ref().unwrap(), &vec![bookmark]);
+        // Confirmation starts a write, but does not update the visible list until success.
+        let _ = library.update(Message::Relinked(old.clone(), Ok(Some(new.clone()))));
+        let _ = library.update(Message::ConfirmRelink);
+        assert!(library.busy);
+        assert_eq!(library.books, vec![old.clone()]);
+        let _ = library.update(Message::Saved(Err("konflik".into())));
+        assert!(!library.busy);
+        assert_eq!(library.books, vec![old.clone()]);
+        assert_eq!(library.snapshot.as_deref(), Some(b"original".as_slice()));
+        let _ = library.update(Message::Relinked(old, Ok(Some(new.clone()))));
+        let _ = library.update(Message::ConfirmRelink);
+        let _ = library.update(Message::Saved(Ok((vec![new.clone()], b"baru".to_vec()))));
+        assert_eq!(library.books, vec![new]);
+        assert_eq!(library.snapshot.as_deref(), Some(b"baru".as_slice()));
+        assert_eq!(library.bookmarks.as_ref().unwrap()[0].path, PathBuf::from("/books/old.epub"));
+    }
+
+    #[test]
+    fn relink_rejects_duplicate_same_and_missing_entries() {
+        let old = PathBuf::from("/old.txt");
+        let new = PathBuf::from("/new.txt");
+        let books = vec![old.clone(), new.clone()];
+        assert!(replace_book(&books, &old, &new).is_err());
+        assert!(replace_book(&books, &old, &old).is_err());
+        assert!(replace_book(&books, Path::new("/missing"), Path::new("/next")).is_err());
+        assert!(replace_book(&[old.clone(), old.clone()], &old, Path::new("/next")).is_err());
+        assert_eq!(replace_book(&books, &old, Path::new("/next")).unwrap(), vec![PathBuf::from("/next"), new.clone()]);
+        let mut library = Library { books, loaded: true, busy: true, ..Library::default() };
+        let _ = library.update(Message::Relinked(old.clone(), Ok(Some(new))));
+        assert!(library.pending_relink.is_none());
+        assert!(library.error.as_deref().unwrap().contains("sudah ada"));
+        let _ = library.update(Message::Relinked(old.clone(), Ok(None)));
+        assert!(library.pending_relink.is_none());
+        let _ = library.update(Message::Relinked(old, Err("pilih gagal".into())));
+        assert_eq!(library.error.as_deref(), Some("pilih gagal"));
+        assert_eq!(library.books.len(), 2);
+    }
+
+    #[test]
+    fn relink_confirmation_blocks_open_and_continue_messages() {
+        let mut app = crate::NovelCraft::default();
+        let old = PathBuf::from("/old.txt");
+        let new = PathBuf::from("/new.txt");
+        let _ = app.library.update(Message::Loaded(Ok((vec![old.clone()], None))));
+        let _ = app.library.update(Message::Relinked(old.clone(), Ok(Some(new))));
+        let _ = app.update(crate::Message::Library(Message::Open(old.clone())));
+        let _ = app.update(crate::Message::Library(Message::Continue(old)));
+        assert_eq!(app.page, crate::Page::Library);
+        assert!(!app.reader.is_busy());
+    }
+
+    #[tokio::test]
+    async fn relink_checks_target_and_conflict_without_changing_files_or_bookmarks() {
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("novelcraft-library-relink-{}-{unique}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let storage = dir.join("library.json");
+        let bookmarks = dir.join("bookmarks.json");
+        let old = dir.join("old.txt");
+        let new = dir.join("new.txt");
+        tokio::fs::write(&old, b"old contents").await.unwrap();
+        tokio::fs::write(&new, b"new contents").await.unwrap();
+        tokio::fs::write(&bookmarks, b"existing bookmark data").await.unwrap();
+        let initial = vec![old.clone()];
+        let snapshot = save_to(&storage, &initial, None).await.unwrap();
+        let updated = replace_book(&initial, &old, &new).unwrap();
+        assert!(validate_relink_target(&dir).await.is_err());
+        assert!(validate_relink_target(&dir.join("missing.txt")).await.is_err());
+        tokio::fs::write(&storage, b"[\"/external.txt\"]").await.unwrap();
+        assert!(save_relinked_to(&storage, updated.clone(), Some(snapshot), &new).await.is_err());
+        assert_eq!(tokio::fs::read(&storage).await.unwrap(), b"[\"/external.txt\"]".to_vec());
+        let current = tokio::fs::read(&storage).await.unwrap();
+        tokio::fs::remove_file(&new).await.unwrap();
+        assert!(save_relinked_to(&storage, updated.clone(), Some(current.clone()), &new).await.is_err());
+        assert_eq!(tokio::fs::read(&storage).await.unwrap(), current);
+        tokio::fs::write(&new, b"new contents").await.unwrap();
+        let (saved, _) = save_relinked_to(&storage, updated.clone(), Some(current), &new).await.unwrap();
+        assert_eq!(saved, updated);
+        assert_eq!(load_from(&storage).await.unwrap().0, updated);
+        assert_eq!(tokio::fs::read(&old).await.unwrap(), b"old contents".to_vec());
+        assert_eq!(tokio::fs::read(&new).await.unwrap(), b"new contents".to_vec());
+        assert_eq!(tokio::fs::read(&bookmarks).await.unwrap(), b"existing bookmark data".to_vec());
+        tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 
     #[test]

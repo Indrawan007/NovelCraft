@@ -371,6 +371,8 @@ impl Library {
         let mut list = Row::new().spacing(16).width(Length::Fill);
         let visible = self.visible_books();
         let matches = visible.len();
+        // Build once per view rather than scanning every bookmark for each card.
+        let bookmarks_by_path = self.bookmarks.as_ref().map(|items| bookmark_index(items));
         for path in visible {
             let name = book_name(path);
             let mut open = button(text("Baca").size(12)).style(button::secondary);
@@ -389,8 +391,8 @@ impl Library {
             .width(Length::Fill)
             .spacing(8);
             let mut actions = row![open].spacing(12);
-            if let Some(bookmarks) = &self.bookmarks {
-                let bookmark = bookmarks.iter().find(|item| item.path == *path);
+            if let Some(bookmarks) = &bookmarks_by_path {
+                let bookmark = bookmarks.get(path.as_path()).copied();
                 card = card.push(text(bookmark_label(path, bookmark)).size(14));
                 if let Some(bookmark) = bookmark {
                     let mut continue_reading = button(text("Lanjut baca").size(12)).style(button::secondary);
@@ -398,12 +400,13 @@ impl Library {
                         continue_reading = continue_reading.on_press(Message::Continue(path.clone()));
                     }
                     actions = actions.push(continue_reading);
-                    let estimate = match estimated_position(path, bookmark) {
+                    let percent = estimated_position(path, bookmark);
+                    let estimate = match percent {
                         Some(percent) => format!("Perkiraan posisi keseluruhan: {percent}%"),
                         None => "Perkiraan posisi keseluruhan tidak tersedia".to_owned(),
                     };
                     card = card.push(text(estimate).size(12).color(crate::mockup_style::muted(theme)));
-                    if let Some(percent) = estimated_position(path, bookmark) {
+                    if let Some(percent) = percent {
                         card = card.push(progress_bar(0.0..=100.0, f32::from(percent)).height(3));
                     }
                 }
@@ -434,6 +437,13 @@ impl Library {
         }
         view.push(scrollable(list.padding(iced::Padding { bottom: 16.0, ..iced::Padding::default() }).wrap()).height(Length::Fill)).into()
     }
+}
+
+// Match the previous linear lookup: when legacy data has duplicates, use the first.
+fn bookmark_index(bookmarks: &[Bookmark]) -> HashMap<&Path, &Bookmark> {
+    let mut index = HashMap::with_capacity(bookmarks.len());
+    for bookmark in bookmarks { index.entry(bookmark.path.as_path()).or_insert(bookmark); }
+    index
 }
 
 fn availability_label(status: Option<&Availability>, checking: bool) -> &'static str {
@@ -852,6 +862,20 @@ mod tests {
         assert!(matches_name("Laskar Pelangi.EPUB", "pelangi"));
         assert!(!matches_name("Laskar Pelangi.EPUB", "bulan"));
         assert!(matches_name("Novel.txt", ""));
+    }
+
+    #[test]
+    fn indexed_bookmark_lookup_matches_linear_lookup_including_duplicates() {
+        let mut bookmarks: Vec<Bookmark> = (0..4000).map(|i| Bookmark {
+            path: format!("/book-{i}.epub").into(), section: i, section_count: None, scroll_percent: Some(10), markdown_source: false,
+        }).collect();
+        bookmarks.push(Bookmark { path: "/book-25.epub".into(), section: 9999, section_count: None, scroll_percent: None, markdown_source: false });
+        let index = bookmark_index(&bookmarks);
+        for i in [0, 25, 3999, 4000] {
+            let path = PathBuf::from(format!("/book-{i}.epub"));
+            assert_eq!(index.get(path.as_path()).copied(), bookmarks.iter().find(|item| item.path == path));
+        }
+        assert_eq!(index.len(), 4000);
     }
 
     #[test]

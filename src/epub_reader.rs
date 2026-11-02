@@ -1,5 +1,6 @@
 use epub::doc::{EpubDoc, NavPoint};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,7 +120,10 @@ fn parse_nav(xml: &str, nav_path: &Path, section_paths: &[Option<PathBuf>]) -> O
     let list = nav.children().find(|node| node.has_tag_name((XHTML_NS, "ol")))?;
     let mut pending: Vec<_> = list.children().filter(|node| node.has_tag_name((XHTML_NS, "li")))
         .rev().map(|node| (node, 0_usize)).collect();
-    let paths: Vec<_> = section_paths.iter().map(|path| path.as_deref().and_then(normalize_archive_path)).collect();
+    let mut paths = HashMap::with_capacity(section_paths.len());
+    for (index, path) in section_paths.iter().enumerate() {
+        if let Some(path) = path.as_deref().and_then(normalize_archive_path) { paths.entry(path).or_insert(index); }
+    }
     let mut entries = Vec::new();
     while let Some((item, depth)) = pending.pop() {
         if let Some(nested) = item.children().find(|node| node.has_tag_name((XHTML_NS, "ol"))) {
@@ -128,7 +132,7 @@ fn parse_nav(xml: &str, nav_path: &Path, section_paths: &[Option<PathBuf>]) -> O
         }
         let Some(link) = item.children().find(|node| node.has_tag_name((XHTML_NS, "a"))) else { continue };
         let Some(target) = link.attribute("href").and_then(|href| resolve_nav_path(nav_path, href)) else { continue };
-        let Some(section) = paths.iter().position(|path| path.as_ref() == Some(&target)) else { continue };
+        let Some(&section) = paths.get(&target) else { continue };
         let raw_label: String = link.descendants().filter(|node| node.is_text())
             .filter_map(|node| node.text()).collect();
         let label = raw_label.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -143,6 +147,10 @@ fn parse_nav(xml: &str, nav_path: &Path, section_paths: &[Option<PathBuf>]) -> O
 // beginning of the matching spine item because the Reader displays plain text.
 fn map_toc(points: &[NavPoint], section_paths: &[Option<PathBuf>]) -> Vec<TocEntry> {
     let mut entries = Vec::new();
+    let mut paths = HashMap::with_capacity(section_paths.len());
+    for (index, path) in section_paths.iter().enumerate() {
+        if let Some(path) = path.as_deref() { paths.entry(path).or_insert(index); }
+    }
     let mut pending: Vec<_> = points.iter().rev().map(|point| (point, 0_usize)).collect();
     while let Some((point, depth)) = pending.pop() {
         pending.extend(point.children.iter().rev().map(|child| (child, depth.saturating_add(1))));
@@ -150,7 +158,7 @@ fn map_toc(points: &[NavPoint], section_paths: &[Option<PathBuf>]) -> Vec<TocEnt
         // Ignore external and unsupported links instead of guessing a target.
         if uri.contains("://") || uri.contains('?') { continue; }
         let path = Path::new(uri.split('#').next().unwrap_or(""));
-        if let Some(section) = section_paths.iter().position(|item| item.as_deref() == Some(path)) {
+        if let Some(&section) = paths.get(path) {
             let label = point.label.trim();
             if !label.is_empty() {
                 entries.push(TocEntry { label: label.to_owned(), section, depth });
@@ -257,6 +265,16 @@ mod tests {
         assert_eq!(map_toc(&[point], &[Some("OEBPS/first.xhtml".into())]), vec![
             TocEntry { label: "Child".into(), section: 0, depth: 1 },
         ]);
+    }
+
+    #[test]
+    fn duplicate_spine_paths_resolve_to_first_section_for_nav_and_ncx() {
+        let paths = [None, Some(PathBuf::from("OEBPS/first.xhtml")), Some(PathBuf::from("OEBPS/first.xhtml"))];
+        let xml = r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="first.xhtml#anchor">First</a></li></ol></nav></body></html>"#;
+        let toc = parse_nav(xml, Path::new("OEBPS/nav.xhtml"), &paths).unwrap();
+        assert_eq!(toc, vec![TocEntry { label: "First".into(), section: 1, depth: 0 }]);
+        let point = NavPoint { label: "First".into(), content: "OEBPS/first.xhtml#anchor".into(), children: vec![], play_order: Default::default() };
+        assert_eq!(map_toc(&[point], &paths), toc);
     }
 
     #[test]

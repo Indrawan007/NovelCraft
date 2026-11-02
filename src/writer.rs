@@ -29,6 +29,8 @@ pub struct Writer {
     autosave_in_flight: bool,
     show_preview: bool,
     preview_items: Vec<markdown::Item>,
+    preview_revision: u64,
+    preview_timer: Option<iced::task::Handle>,
     preview_notice: Option<String>,
     dirty: bool,
     busy: bool,
@@ -60,6 +62,7 @@ pub enum Message {
     TargetChanged(String),
     Shortcut(crate::shortcuts::Shortcut),
     TogglePreview,
+    PreviewRefresh(u64),
     PreviewLink(markdown::Url),
     NewDraft,
     Open,
@@ -143,6 +146,7 @@ impl Writer {
                 self.content.perform(action);
                 if edited {
                     self.refresh_content_stats();
+                    if self.show_preview { return self.schedule_preview(); }
                 }
             }
             Message::TargetChanged(value) if !self.controls_blocked() => {
@@ -151,11 +155,16 @@ impl Writer {
             Message::TogglePreview if !self.controls_blocked() => {
                 self.show_preview = !self.show_preview;
                 self.preview_notice = None;
+                self.preview_timer = None;
                 if self.show_preview {
                     self.refresh_preview();
                 } else {
                     self.preview_items.clear();
                 }
+            }
+            Message::PreviewRefresh(revision) if self.show_preview && self.preview_timer.is_some() && self.preview_revision == revision => {
+                self.preview_timer = None;
+                self.refresh_preview();
             }
             Message::PreviewLink(url) => {
                 self.preview_notice = Some(format!("Tautan tidak dibuka otomatis: {url}"));
@@ -375,7 +384,9 @@ impl Writer {
                         self.saved_contents = Some(contents);
                         self.target_input.clear();
                         self.preview_notice = None;
+                        self.preview_timer = None;
                         self.refresh_content_stats();
+                        if self.show_preview { self.refresh_preview(); }
                         self.dirty = false;
                         self.error = None;
                     }
@@ -505,9 +516,16 @@ impl Writer {
         // Iced joins lines with whitespace in Content::text(); counting each line
         // is equivalent without allocating a second copy of the entire draft.
         self.word_count = self.content.lines().map(|line| line.split_whitespace().count()).sum();
-        if self.show_preview {
-            self.refresh_preview();
-        }
+    }
+
+    fn schedule_preview(&mut self) -> Task<Message> {
+        static NEXT_REVISION: AtomicU64 = AtomicU64::new(1);
+        let revision = NEXT_REVISION.fetch_add(1, Ordering::Relaxed);
+        self.preview_revision = revision;
+        let task = Task::perform(async { tokio::time::sleep(std::time::Duration::from_millis(250)).await }, move |_| Message::PreviewRefresh(revision));
+        let (task, handle) = task.abortable();
+        self.preview_timer = Some(handle.abort_on_drop());
+        task
     }
 
     fn refresh_preview(&mut self) {
@@ -710,7 +728,7 @@ impl Writer {
             )
             .map(Message::PreviewLink);
             let preview_pane = column![
-                text("Preview Markdown").size(16),
+                text(if self.preview_timer.is_some() { "Preview Markdown · memperbarui…" } else { "Preview Markdown" }).size(16),
                 scrollable(container(preview_content).padding(12).width(Length::Fill))
                     .height(Length::Fill),
             ]
@@ -1639,11 +1657,43 @@ mod tests {
         let _ = writer.update(Message::TogglePreview);
         let _ = writer.update(Message::Edit(Action::Edit(Edit::Paste(Arc::new("# Judul\n\nIsi".into())))));
         assert!(writer.dirty);
+        let revision = writer.preview_revision;
+        let _ = writer.update(Message::PreviewRefresh(revision));
         assert!(matches!(writer.preview_items.first(), Some(markdown::Item::Heading(..))));
         let _ = writer.update(Message::Opened(Ok(Some((PathBuf::from("lain.md"), "- satu\n- dua".into())))));
         assert!(writer.show_preview);
         assert!(matches!(writer.preview_items.first(), Some(markdown::Item::List { .. })));
         assert!(!writer.dirty);
+    }
+
+    #[test]
+    fn preview_debounces_and_discards_stale_timers() {
+        use iced::widget::text_editor::{Action, Edit};
+        use std::sync::Arc;
+        let mut writer = Writer::default();
+        let _ = writer.update(Message::TogglePreview);
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Paste(Arc::new("# Pertama".into())))));
+        let first = writer.preview_revision;
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Paste(Arc::new(" terbaru".into())))));
+        let second = writer.preview_revision;
+        assert_ne!(first, second);
+        assert!(writer.preview_timer.is_some());
+        let _ = writer.update(Message::PreviewRefresh(first));
+        assert!(writer.preview_timer.is_some());
+        assert!(writer.preview_items.is_empty());
+        let _ = writer.update(Message::PreviewRefresh(second));
+        assert!(writer.preview_timer.is_none());
+        assert!(matches!(writer.preview_items.first(), Some(markdown::Item::Heading(..))));
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Insert('!'))));
+        let stale = writer.preview_revision;
+        let _ = writer.update(Message::Opened(Ok(Some(("/new.md".into(), "- baru".into())))));
+        let _ = writer.update(Message::PreviewRefresh(stale));
+        assert!(matches!(writer.preview_items.first(), Some(markdown::Item::List { .. })));
+        let _ = writer.update(Message::Edit(Action::Edit(Edit::Insert('!'))));
+        let stale = writer.preview_revision;
+        let _ = writer.update(Message::TogglePreview);
+        let _ = writer.update(Message::PreviewRefresh(stale));
+        assert!(!writer.show_preview); assert!(writer.preview_items.is_empty());
     }
 
     #[test]

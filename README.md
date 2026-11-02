@@ -56,8 +56,10 @@ selama sesi dan direset ketika draft baru dibuat atau sebuah file berhasil dibuk
 Target menghitung seluruh isi draft berdasarkan pemisah whitespace, termasuk
 teks yang sudah ada dan markup Markdown. Hitungan diperbarui saat draft dibuka
 atau diedit, bukan setiap tampilan dibangun ulang. Perhitungan masih menelusuri
-seluruh draft saat diedit; preview Markdown juga diparse ulang setelah edit, sehingga
-draft besar tetap dapat terasa lambat. Ini bukan target harian; mengubah target
+seluruh draft saat diedit. Saat preview terbuka, parsing menunggu 250 ms tanpa edit
+agar tidak dilakukan pada setiap ketikan; label menunjukkan saat preview sedang
+menunggu pembaruan. Parsing tetap menelusuri seluruh draft di thread UI, sehingga
+draft besar masih dapat terasa lambat. Ini bukan target harian; mengubah target
 tidak mengubah atau menyimpan isi file. Kosongkan kolom untuk menyembunyikan target.
 Tombol **Fullscreen (F11)** terpisah dari mode fokus dan tersedia di semua halaman;
 tekan lagi untuk kembali ke mode berjendela. Fullscreen dapat digabungkan dengan

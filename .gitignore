@@ -1,0 +1,82 @@
+# ═══════════════════════════════════════════
+# Rust / Cargo
+# ═══════════════════════════════════════════
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# ═══════════════════════════════════════════
+# Build & Release
+# ═══════════════════════════════════════════
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# ═══════════════════════════════════════════
+# Runtime Data (jangan track data user)
+# ═══════════════════════════════════════════
+/data/*.db
+/data/*.db-journal
+/data/*.db-wal
+/data/*.db-shm
+/data/novels/
+/data/exports/
+/data/backups/
+
+# ═══════════════════════════════════════════
+# User Config (local, per-machine)
+# ═══════════════════════════════════════════
+/config.local.toml
+.env
+.env.*
+
+# ═══════════════════════════════════════════
+# IDE & Editor
+# ═══════════════════════════════════════════
+# VS Code
+.vscode/
+*.code-workspace
+
+# Neovim / Vim
+*.swp
+*.swo
+*~
+.session.vim
+
+# Helix
+.helix/
+
+# JetBrains (RustRover / CLion)
+.idea/
+*.iml
+
+# Zed
+.zed/
+
+# ═══════════════════════════════════════════
+# OS Files (Linux)
+# ═══════════════════════════════════════════
+.DS_Store
+Thumbs.db
+*.directory
+
+# ═══════════════════════════════════════════
+# AUR / Packaging
+# ═══════════════════════════════════════════
+*.pkg.tar.zst
+*.pkg.tar.xz
+/src/
+/pkg/
+*.log
+
+# ═══════════════════════════════════════════
+# Temporary & Misc
+# ═══════════════════════════════════════════
+*.tmp
+*.bak
+*.orig
+*.rej
+tags
